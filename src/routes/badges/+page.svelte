@@ -1,10 +1,11 @@
 <script>
-  import { onMount } from 'svelte';
   import { storage } from '$lib/storage.js';
   import { EVENTS, GROUPS, uid } from '$lib/events.js';
 
-  let customBadges = $state([]);
-  let badgeAwards = $state({});
+  let { data } = $props();
+
+  let customBadges = $state(data.customBadges);
+  let badgeAwards = $state(data.badgeAwards);
   let showBuilder = $state(false);
   let bEvent = $state('100m');
   let bTarget = $state('');
@@ -20,13 +21,8 @@
     { name: 'Group record', desc: 'Best in your group at this event' }
   ];
 
-  onMount(() => {
-    customBadges = storage.getCustomBadges();
-    badgeAwards = storage.getBadgeAwards();
-  });
-
   const eventEntries = Object.entries(EVENTS);
-  const unitLabel = $derived(() => EVENTS[bEvent]?.kind === 'field' ? 'metres' : 'seconds');
+  const unitLabel = $derived(EVENTS[bEvent]?.kind === 'field' ? 'metres' : 'seconds');
 
   function saveBadge() {
     const target = parseFloat(bTarget);

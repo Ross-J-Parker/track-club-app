@@ -1,56 +1,52 @@
 <script>
-  import { onMount, tick } from 'svelte';
-  import { storage } from '$lib/storage.js';
+  import { tick } from 'svelte';
   import { fmtTime } from '$lib/events.js';
   import Chart from 'chart.js/auto';
 
-  let athletes = $state([]);
-  let results = $state([]);
+  let { data } = $props();
+
+  let athletes = $derived(data.athletes);
+  let results = $derived(data.results);
+
   let athleteId = $state('');
   let eventName = $state('');
   let chartCanvas;
   let chartInstance = null;
 
-  onMount(() => {
-    athletes = storage.getAthletes();
-    results = storage.getResults();
-  });
+  const availableEvents = $derived(
+    !athleteId ? [] : [...new Set(results.filter(r => r.athleteId === athleteId && !r.dnf).map(r => r.event))]
+  );
 
-  const availableEvents = $derived(() => {
-    if (!athleteId) return [];
-    return [...new Set(results.filter(r => r.athleteId === athleteId && !r.dnf).map(r => r.event))];
-  });
-
-  const filtered = $derived(() => {
+  const filtered = $derived.by(() => {
     let rows = [...results].sort((a, b) => b.date.localeCompare(a.date));
     if (athleteId) rows = rows.filter(r => r.athleteId === athleteId);
     if (eventName) rows = rows.filter(r => r.event === eventName);
     return rows;
   });
 
-  const progressionData = $derived(() => {
+  const progressionData = $derived.by(() => {
     if (!athleteId || !eventName) return null;
-    const data = results
+    const d = results
       .filter(r => r.athleteId === athleteId && r.event === eventName && !r.dnf)
       .sort((a, b) => a.date.localeCompare(b.date));
-    if (data.length < 2) return null;
-    return data;
+    if (d.length < 2) return null;
+    return d;
   });
 
   $effect(() => {
-    const data = progressionData;
+    const d = progressionData;
     if (chartInstance) {
       chartInstance.destroy();
       chartInstance = null;
     }
-    if (!data || !chartCanvas) return;
+    if (!d || !chartCanvas) return;
     tick().then(() => {
-      const isField = data[0].kind === 'field';
-      const values = data.map(r => isField ? r.bestAttempt : r.finalTime / 1000);
+      const isField = d[0].kind === 'field';
+      const values = d.map(r => isField ? r.bestAttempt : r.finalTime / 1000);
       chartInstance = new Chart(chartCanvas, {
         type: 'line',
         data: {
-          labels: data.map(r => r.date),
+          labels: d.map(r => r.date),
           datasets: [{
             label: isField ? 'Distance (m)' : 'Time (s)',
             data: values,

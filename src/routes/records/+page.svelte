@@ -1,11 +1,8 @@
 <script>
-  import { onMount } from 'svelte';
-  import { storage } from '$lib/storage.js';
   import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, GROUPS, fmtTime } from '$lib/events.js';
 
-  let results = $state([]);
-
-  onMount(() => { results = storage.getResults().filter(r => !r.dnf); });
+  let { data } = $props();
+  const results = $derived(data.results.filter(r => !r.dnf));
 
   function bestFor(filterFn, kind) {
     const subset = results.filter(filterFn);

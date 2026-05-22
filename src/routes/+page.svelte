@@ -1,10 +1,23 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { storage } from '$lib/storage.js';
   import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, GROUPS, fmtTime, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
 
-  let athletes = $state([]);
+  let { data } = $props();
+
+  // Seed athletes if empty (first run)
+  let athletes = $state(data.athletes.length > 0 ? data.athletes : [
+    { id: 'a1', name: 'Amelia Chen' },
+    { id: 'a2', name: 'Ben Okafor' },
+    { id: 'a3', name: 'Chloe Davies' },
+    { id: 'a4', name: 'Daniyal Khan' },
+    { id: 'a5', name: 'Esme Tate' }
+  ]);
+  if (data.athletes.length === 0) {
+    storage.setAthletes(athletes);
+  }
+
   let phase = $state('setup'); // setup | live | field | results
   let group = $state('Sprints');
   let date = $state(todayISO());
@@ -25,21 +38,6 @@
   let openSplits = $state(null);
   let hintMessage = $state('');
   let hintTimer = null;
-
-  onMount(() => {
-    athletes = storage.getAthletes();
-    if (athletes.length === 0) {
-      // seed
-      athletes = [
-        { id: 'a1', name: 'Amelia Chen' },
-        { id: 'a2', name: 'Ben Okafor' },
-        { id: 'a3', name: 'Chloe Davies' },
-        { id: 'a4', name: 'Daniyal Khan' },
-        { id: 'a5', name: 'Esme Tate' }
-      ];
-      storage.setAthletes(athletes);
-    }
-  });
 
   onDestroy(() => {
     if (tickHandle) clearInterval(tickHandle);
@@ -225,7 +223,7 @@
   }
 
   // Derived
-  const sortedResults = $derived(() => {
+  const sortedResults = $derived.by(() => {
     const finishers = resultsRows.filter(r => !r.dnf);
     const dnfs = resultsRows.filter(r => r.dnf);
     const isField = resultsRows[0]?.kind === 'field';

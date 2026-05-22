@@ -1,28 +1,31 @@
 <script>
-  import { onMount } from 'svelte';
   import { storage } from '$lib/storage.js';
   import { uid } from '$lib/events.js';
 
-  let athletes = $state([]);
+  let { data } = $props();
+
+  let athletes = $state(data.athletes);
   let inputValue = $state('');
   let toast = $state(null);
   let toastTimer = null;
 
-  onMount(() => { athletes = storage.getAthletes(); });
+  function persist() {
+    storage.setAthletes(athletes);
+  }
 
   function addAthletes() {
     const names = inputValue.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
     if (names.length === 0) return;
     const added = names.map(name => ({ id: uid('a'), name }));
     athletes = [...athletes, ...added];
-    storage.setAthletes(athletes);
+    persist();
     inputValue = '';
     showToast(
       added.length === 1 ? `Added ${added[0].name}` : `Added ${added.length} athletes`,
       () => {
         const ids = new Set(added.map(a => a.id));
         athletes = athletes.filter(a => !ids.has(a.id));
-        storage.setAthletes(athletes);
+        persist();
       }
     );
   }
@@ -30,11 +33,11 @@
   function deleteAthlete(a) {
     const idx = athletes.indexOf(a);
     athletes = athletes.filter(x => x.id !== a.id);
-    storage.setAthletes(athletes);
+    persist();
     showToast(`Removed ${a.name}`, () => {
       athletes.splice(idx, 0, a);
       athletes = [...athletes];
-      storage.setAthletes(athletes);
+      persist();
     });
   }
 
