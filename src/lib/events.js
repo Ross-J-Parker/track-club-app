@@ -34,3 +34,28 @@ export function todayISO() {
 export function uid(prefix = '') {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
+
+// Compute personal bests across all events for an athlete.
+// Returns: [{ event, kind, value, valueFmt, date, group }]
+export function pbsForAthlete(athleteId, allResults) {
+  const byEvent = {};
+  for (const r of allResults) {
+    if (r.athleteId !== athleteId || r.dnf) continue;
+    const isField = r.kind === 'field';
+    const value = isField ? r.bestAttempt : r.finalTime;
+    if (value == null) continue;
+    const existing = byEvent[r.event];
+    const better = isField
+      ? !existing || value > existing.value
+      : !existing || value < existing.value;
+    if (better) {
+      byEvent[r.event] = { event: r.event, kind: r.kind, value, date: r.date, group: r.group };
+    }
+  }
+  return Object.values(byEvent);
+}
+
+export function fmtValue(r) {
+  if (r.dnf || (r.kind === 'track' && r.finalTime == null)) return 'DNF';
+  return r.kind === 'field' ? `${r.bestAttempt.toFixed(2)} m` : fmtTime(r.finalTime);
+}

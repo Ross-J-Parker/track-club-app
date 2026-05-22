@@ -215,12 +215,47 @@
   }
 
   function openSplitsFor(r) {
-    if (r.kind === 'field' || !r.splits || r.splits.length < 2) {
-      flashHint('No splits — single-lap event.');
+    const hasSplits = r.kind === 'track' && r.splits && r.splits.length >= 2;
+    const hasBadges = (badgesByAthlete[r.athleteId] || []).length > 0;
+    if (!hasSplits && !hasBadges) {
+      flashHint('No splits or badges to show.');
       return;
     }
-    openSplits = r;
+    // Toggle: clicking the open row closes it
+    openSplits = openSplits?.id === r.id ? null : r;
   }
+
+  // Classify a badge into a category for pill display
+  function classifyBadge(b) {
+    const name = b.badge;
+    if (name === 'Personal best') return { code: 'PB', label: 'Personal best', tone: 'pb' };
+    if (name === 'Club record') return { code: 'CR', label: 'Club record', tone: 'cr' };
+    if (name === 'Local hero') return { code: '★', label: 'Local hero', tone: 'hero' };
+    if (name === 'First time at this event') return { code: '1st', label: 'First time at event', tone: 'first' };
+    // Group record: e.g. "U11 record", "Sprints record"
+    const groupMatch = name.match(/^(.+) record$/);
+    if (groupMatch && groupMatch[1] !== 'Club') {
+      const group = groupMatch[1];
+      const short = group === 'Middle distance' ? 'MD' : group === 'U11' ? 'U11' : group.slice(0, 3);
+      return { code: short, label: `${group} record`, tone: 'group' };
+    }
+    // Custom Sub-X or maintained
+    if (name.endsWith('maintained')) {
+      return { code: '↻', label: name, tone: 'maintained' };
+    }
+    return { code: '★', label: name, tone: 'custom' };
+  }
+
+  const badgesByAthlete = $derived.by(() => {
+    const map = {};
+    for (const a of awardedBadges) {
+      const r = resultsRows.find(x => x.athleteName === a.athleteName);
+      const id = r?.athleteId || a.athleteName;
+      if (!map[id]) map[id] = [];
+      map[id].push({ ...a, ...classifyBadge(a) });
+    }
+    return map;
+  });
 
   // Derived
   const sortedResults = $derived.by(() => {
@@ -392,15 +427,64 @@
       <button onclick={newRace}>New race</button>
     </div>
     {#each sorted as r, i}
-      {@const hasDetail = !isField && r.splits && r.splits.length > 1}
-      <button type="button" class="result-row" class:clickable={hasDetail} onclick={() => openSplitsFor(r)}>
+      {@const hasSplits = !isField && r.splits && r.splits.length > 1}
+      {@const badges = badgesByAthlete[r.athleteId] || []}
+      {@const hasDetail = hasSplits || badges.length > 0}
+      {@const isOpen = openSplits?.id === r.id}
+      <button type="button" class="result-row" class:clickable={hasDetail} class:open={isOpen} onclick={() => openSplitsFor(r)}>
         <div class="rank">{i + 1}</div>
-        <div class="rname">{r.athleteName}</div>
+        <div class="rmain">
+          <div class="rname">{r.athleteName}</div>
+          {#if badges.length}
+            <div class="pill-row">
+              {#each badges as b}
+                <span class="pill pill-{b.tone}" title={b.label}>{b.code}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
         <div class="rvalue mono">
           {isField ? `${r.bestAttempt?.toFixed(2)} m` : fmtTime(r.finalTime)}
-          {#if hasDetail}<span class="chev">›</span>{/if}
+          {#if hasDetail}<span class="chev">{isOpen ? '⌃' : '›'}</span>{/if}
         </div>
       </button>
+      {#if isOpen}
+        <div class="detail-panel">
+          {#if hasSplits}
+            <div class="detail-section">
+              <div class="detail-label">Splits</div>
+              <table class="splits-table">
+                <thead>
+                  <tr><th>Lap</th><th>Split</th><th>Lap time</th></tr>
+                </thead>
+                <tbody>
+                  {#each lapBreakdown(r) as lap}
+                    <tr>
+                      <td>{lap.n} {#if lap.fastest}<span class="lap-tag fast">fastest</span>{/if}{#if lap.slowest}<span class="lap-tag slow">slowest</span>{/if}</td>
+                      <td class="mono">{fmtTime(lap.split)}</td>
+                      <td class="mono">{fmtTime(lap.lap)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+          {#if badges.length}
+            <div class="detail-section">
+              <div class="detail-label">Badges earned</div>
+              {#each badges as b}
+                <div class="badge-detail-row">
+                  <span class="pill pill-{b.tone} large">{b.code}</span>
+                  <div>
+                    <div class="badge-detail-name">{b.label}</div>
+                    {#if b.detail}<div class="muted small">{b.detail}</div>{/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
     {/each}
     {#each dnfs as r}
       <div class="result-row dnf">
@@ -409,38 +493,6 @@
       </div>
     {/each}
     {#if hintMessage}<div class="hint">{hintMessage}</div>{/if}
-    {#if openSplits}
-      <div class="splits-panel">
-        <div class="row" style="margin-bottom: 8px;">
-          <div style="font-weight: 600;">{openSplits.athleteName} · {fmtTime(openSplits.finalTime)}</div>
-          <button onclick={() => openSplits = null}>Close</button>
-        </div>
-        <table class="splits-table">
-          <thead>
-            <tr><th>Lap</th><th>Split</th><th>Lap time</th></tr>
-          </thead>
-          <tbody>
-            {#each lapBreakdown(openSplits) as lap}
-              <tr>
-                <td>{lap.n} {#if lap.fastest}<span class="lap-tag fast">fastest</span>{/if}{#if lap.slowest}<span class="lap-tag slow">slowest</span>{/if}</td>
-                <td class="mono">{fmtTime(lap.split)}</td>
-                <td class="mono">{fmtTime(lap.lap)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-    {#if awardedBadges.length}
-      <div class="badges-earned">
-        <h3 style="font-size: 14px; margin-bottom: 8px;">Badges earned</h3>
-        {#each awardedBadges as b}
-          <div class="badge-pill">
-            <strong>{b.athleteName}</strong> — {b.badge}{b.detail ? ` (${b.detail})` : ''}
-          </div>
-        {/each}
-      </div>
-    {/if}
   </div>
 {/if}
 
@@ -568,16 +620,62 @@
   }
   .result-row.clickable { cursor: pointer; }
   .result-row.clickable:hover { background: var(--surface-2); }
+  .result-row.open { background: var(--surface-2); margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   .result-row.dnf { background: var(--warning-soft); border-color: var(--warning); }
   .rank { font-size: 18px; font-weight: 600; }
+  .rmain { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .rname { font-size: 15px; }
   .rvalue { font-size: 15px; display: flex; align-items: center; gap: 6px; }
-  .chev { color: var(--text-3); font-size: 18px; }
-  .splits-panel {
-    margin-top: 12px;
+  .chev { color: var(--text-3); font-size: 18px; line-height: 1; }
+  .pill-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+  }
+  .pill.large {
+    padding: 6px 12px;
+    font-size: 13px;
+    min-width: 44px;
+    text-align: center;
+  }
+  .pill-pb        { background: #dbeafe; color: #1e40af; }
+  .pill-cr        { background: #fef3c7; color: #b45309; }
+  .pill-group     { background: #dcfce7; color: #166534; }
+  .pill-hero      { background: #fce7f3; color: #9d174d; }
+  .pill-first     { background: #e0e7ff; color: #3730a3; }
+  .pill-custom    { background: #f3e8ff; color: #6b21a8; }
+  .pill-maintained{ background: var(--surface-2); color: var(--text-2); }
+  @media (prefers-color-scheme: dark) {
+    .pill-pb        { background: #1e3a8a; color: #dbeafe; }
+    .pill-cr        { background: #78350f; color: #fef3c7; }
+    .pill-group     { background: #14532d; color: #dcfce7; }
+    .pill-hero      { background: #831843; color: #fce7f3; }
+    .pill-first     { background: #312e81; color: #e0e7ff; }
+    .pill-custom    { background: #581c87; color: #f3e8ff; }
+    .pill-maintained{ background: var(--surface-2); color: var(--text-2); }
+  }
+  .detail-panel {
     background: var(--surface-2);
-    padding: 14px;
-    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 14px 16px;
+    margin-top: -1px;
+    margin-bottom: 6px;
+  }
+  .detail-section + .detail-section { margin-top: 16px; }
+  .detail-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+    margin-bottom: 8px;
   }
   .splits-table { width: 100%; font-size: 13px; }
   .splits-table th { text-align: left; color: var(--text-2); font-weight: 500; padding: 4px 0; border-bottom: 1px solid var(--border-strong); }
@@ -591,15 +689,16 @@
   }
   .lap-tag.fast { background: var(--success-soft); color: var(--success); }
   .lap-tag.slow { background: var(--warning-soft); color: var(--warning); }
-  .badges-earned { margin-top: 18px; }
-  .badge-pill {
-    padding: 10px 12px;
-    background: var(--info-soft);
-    color: var(--info);
-    border-radius: var(--radius-sm);
-    margin-bottom: 6px;
-    font-size: 13px;
+  .badge-detail-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
   }
+  .badge-detail-row:last-child { border-bottom: none; }
+  .badge-detail-name { font-size: 14px; font-weight: 500; }
+  .small { font-size: 12px; }
   @media (max-width: 600px) {
     .setup-grid { grid-template-columns: 1fr; }
     .clock { font-size: 32px; }
