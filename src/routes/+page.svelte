@@ -31,6 +31,7 @@
   let bleepMode = $state('individual'); // 'individual' | 'team'
   let bleepTeamCount = $state(2);
   let bleepTeams = $state([]); // [{ id, name, athleteIds: Set }]
+  let teamPickerFor = $state(null); // athlete id whose team is being picked
 
   // Race state
   let race = $state(null);
@@ -67,11 +68,12 @@
   }
 
   function startRace() {
-    if (selectedIds.size === 0) {
+    const cfg = EVENTS[eventName];
+    const isTeamBleep = cfg.kind === 'fitness' && bleepMode === 'team';
+    if (!isTeamBleep && selectedIds.size === 0) {
       flashHint('Pick at least one athlete.');
       return;
     }
-    const cfg = EVENTS[eventName];
     if (cfg.kind === 'field') {
       race = {
         event: eventName,
@@ -327,8 +329,56 @@
     bleepTeams = [...bleepTeams]; // trigger reactivity
   }
 
+  function openTeamPicker(athleteId) {
+    teamPickerFor = athleteId;
+  }
+
+  function closeTeamPicker() {
+    teamPickerFor = null;
+  }
+
+  function assignToTeam(teamIdx, athleteId) {
+    // Remove from any existing team (safety) and add to the chosen one
+    bleepTeams.forEach(t => t.athleteIds.delete(athleteId));
+    bleepTeams[teamIdx].athleteIds.add(athleteId);
+    bleepTeams = [...bleepTeams];
+    teamPickerFor = null;
+  }
+
+  function removeFromTeam(teamIdx, athleteId) {
+    bleepTeams[teamIdx].athleteIds.delete(athleteId);
+    bleepTeams = [...bleepTeams];
+  }
+
+  function randomiseTeams() {
+    // Distribute all currently-unassigned athletes across teams as evenly as possible
+    const pool = athletes.filter(a => !bleepTeams.some(t => t.athleteIds.has(a.id)));
+    // Fisher-Yates shuffle
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    // Round-robin into the existing teams
+    shuffled.forEach((a, idx) => {
+      bleepTeams[idx % bleepTeams.length].athleteIds.add(a.id);
+    });
+    bleepTeams = [...bleepTeams];
+  }
+
+  function clearTeams() {
+    if (!confirm('Remove all athletes from teams?')) return;
+    bleepTeams.forEach(t => t.athleteIds.clear());
+    bleepTeams = [...bleepTeams];
+  }
+
+  const unassignedAthletes = $derived(
+    athletes.filter(a => !bleepTeams.some(t => t.athleteIds.has(a.id)))
+  );
+
   function cancelBleepTeams() {
     bleepTeams = [];
+    teamPickerFor = null;
     phase = 'setup';
   }
 
@@ -573,26 +623,30 @@
       </div>
     {/if}
 
-    <div style="margin-top: 18px;">
-      <label class="field">Athletes ({selectedIds.size} selected)</label>
-      {#if athletes.length === 0}
-        <div class="card dim">No athletes yet — add some in the Athletes tab.</div>
-      {:else}
-        <div class="athlete-grid">
-          {#each athletes as a}
-            {@const selected = selectedIds.has(a.id)}
-            <button
-              type="button"
-              class="athlete-chip"
-              class:selected
-              onclick={() => toggleAthlete(a.id)}
-            >
-              {a.name}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    {#if !(currentEventKind === 'fitness' && bleepMode === 'team')}
+      <div style="margin-top: 18px;">
+        <label class="field">Athletes ({selectedIds.size} selected)</label>
+        {#if athletes.length === 0}
+          <div class="card dim">No athletes yet — add some in the Athletes tab.</div>
+        {:else}
+          <div class="athlete-grid">
+            {#each athletes as a}
+              {@const selected = selectedIds.has(a.id)}
+              <button
+                type="button"
+                class="athlete-chip"
+                class:selected
+                onclick={() => toggleAthlete(a.id)}
+              >
+                {a.name}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <p class="muted small" style="margin-top: 18px;">Athletes are assigned to teams on the next screen.</p>
+    {/if}
 
     <button class="primary big" onclick={startRace} style="margin-top: 20px;">
       {currentEventKind === 'fitness' ? (bleepMode === 'team' ? 'Set up teams' : 'Start bleep test') : 'Start race'}
@@ -687,42 +741,82 @@
         <button class="primary" onclick={confirmBleepTeams}>Start bleep test</button>
       </div>
     </div>
-    <p class="muted small" style="margin: 0 0 12px;">Tap an athlete to assign them to a team. Tap their chip in the team to remove them.</p>
+    <p class="muted small" style="margin: 0 0 10px;">
+      Tap an athlete to pick their team. Tap a member chip to remove them from a team.
+    </p>
 
-    {#each bleepTeams as t, i}
+    <!-- Action row: randomise / clear -->
+    <div class="team-actions">
+      <button onclick={randomiseTeams}>Randomise unassigned</button>
+      <button onclick={clearTeams}>Clear all</button>
+    </div>
+
+    <!-- Pool of unassigned athletes -->
+    <div class="pool-section">
+      <div class="muted small section-label">Unassigned ({unassignedAthletes.length})</div>
+      {#if unassignedAthletes.length === 0}
+        <div class="dim small" style="padding: 8px 0;">Everyone's been assigned to a team.</div>
+      {:else}
+        <div class="athlete-grid">
+          {#each unassignedAthletes as a (a.id)}
+            <button
+              type="button"
+              class="athlete-chip"
+              onclick={() => openTeamPicker(a.id)}
+            >
+              {a.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Team cards -->
+    {#each bleepTeams as t, i (t.id)}
       <div class="team-card">
         <input type="text" bind:value={t.name} class="team-name-input" />
         <div class="team-members">
           {#if t.athleteIds.size === 0}
-            <span class="dim small">No one assigned yet</span>
+            <span class="dim small">No one assigned yet — tap an athlete above.</span>
           {:else}
-            {#each [...t.athleteIds] as aid}
+            {#each [...t.athleteIds] as aid (aid)}
               {@const a = athletes.find(x => x.id === aid)}
               {#if a}
-                <button type="button" class="member-chip" onclick={() => toggleAthleteInTeam(i, aid)}>
-                  {a.name} ×
+                <button
+                  type="button"
+                  class="member-chip"
+                  onclick={() => removeFromTeam(i, aid)}
+                  aria-label={`Remove ${a.name} from ${t.name}`}
+                >
+                  {a.name} <span class="x">×</span>
                 </button>
               {/if}
             {/each}
           {/if}
         </div>
-        <div class="team-add">
-          <div class="muted small" style="margin-bottom: 6px;">Add to {t.name}:</div>
-          <div class="athlete-grid small-grid">
-            {#each [...selectedIds] as aid}
-              {@const a = athletes.find(x => x.id === aid)}
-              {@const inAnyTeam = bleepTeams.some(other => other.athleteIds.has(aid))}
-              {#if a && !inAnyTeam}
-                <button type="button" class="athlete-chip small" onclick={() => toggleAthleteInTeam(i, aid)}>
-                  {a.name}
-                </button>
-              {/if}
-            {/each}
-          </div>
-        </div>
       </div>
     {/each}
+
     {#if hintMessage}<div class="hint">{hintMessage}</div>{/if}
+
+    <!-- Team picker popover -->
+    {#if teamPickerFor}
+      {@const pickerAthlete = athletes.find(a => a.id === teamPickerFor)}
+      <div class="picker-overlay" onclick={closeTeamPicker}>
+        <div class="picker-card" onclick={(e) => e.stopPropagation()}>
+          <div class="picker-title">Assign {pickerAthlete?.name} to:</div>
+          <div class="picker-options">
+            {#each bleepTeams as t, i (t.id)}
+              <button class="picker-team-btn" onclick={() => assignToTeam(i, teamPickerFor)}>
+                {t.name}
+                <span class="muted small">({t.athleteIds.size} {t.athleteIds.size === 1 ? 'member' : 'members'})</span>
+              </button>
+            {/each}
+          </div>
+          <button class="picker-cancel" onclick={closeTeamPicker}>Cancel</button>
+        </div>
+      </div>
+    {/if}
   </div>
 {:else if phase === 'bleep-live'}
   <div class="bleep-live">
@@ -1132,8 +1226,57 @@
     min-height: 0;
     font-size: 13px;
   }
+  .member-chip .x { opacity: 0.7; margin-left: 4px; }
   .small-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important; gap: 6px; }
   .athlete-chip.small { padding: 8px 10px; min-height: 40px; font-size: 13px; }
+
+  /* Team setup screen */
+  .team-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .team-actions button { padding: 8px 14px; font-size: 13px; min-height: 40px; }
+  .pool-section { margin-bottom: 16px; }
+  .section-label { margin-bottom: 8px; font-weight: 500; }
+
+  /* Team-picker popover */
+  .picker-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 16px;
+  }
+  .picker-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 340px;
+  }
+  .picker-title { font-weight: 600; margin-bottom: 12px; }
+  .picker-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .picker-team-btn {
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .picker-team-btn:hover { background: var(--border); }
+  .picker-cancel { width: 100%; }
 
   /* Bleep live screen */
   .bleep-position { display: flex; align-items: baseline; gap: 12px; }
