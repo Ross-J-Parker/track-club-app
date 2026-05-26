@@ -1,5 +1,5 @@
 <script>
-  import { fmtTime } from '$lib/events.js';
+  import { fmtValue } from '$lib/events.js';
 
   let { data } = $props();
 
@@ -54,7 +54,7 @@
           <div class="muted small">{r.date}</div>
         </div>
         <div class="mono">
-          {r.dnf ? 'DNF' : (r.kind === 'field' ? `${r.bestAttempt.toFixed(2)} m` : fmtTime(r.finalTime))}
+          {fmtValue(r)}
         </div>
       </a>
     {/each}

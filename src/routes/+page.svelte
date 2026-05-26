@@ -1,8 +1,10 @@
 <script>
   import { onDestroy } from 'svelte';
   import { storage } from '$lib/storage.js';
-  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, GROUPS, fmtTime, todayISO, uid } from '$lib/events.js';
+  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, FITNESS_EVENTS, GROUPS, fmtTime, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
+  import { BLEEP_LEVELS } from '$lib/bleep.js';
+  import { BleepEngine } from '$lib/bleepEngine.js';
 
   let { data } = $props();
 
@@ -18,16 +20,26 @@
     storage.setAthletes(athletes);
   }
 
-  let phase = $state('setup'); // setup | live | field | results
+  // Phase: setup | live | field | bleep-teams | bleep-live | results
+  let phase = $state('setup');
   let group = $state('Sprints');
   let date = $state(todayISO());
   let eventName = $state('100m');
   let selectedIds = $state(new Set());
 
+  // Bleep test setup state
+  let bleepMode = $state('individual'); // 'individual' | 'team'
+  let bleepTeamCount = $state(2);
+  let bleepTeams = $state([]); // [{ id, name, athleteIds: Set }]
+
   // Race state
   let race = $state(null);
   let now = $state(0);
   let tickHandle = null;
+
+  // Bleep engine
+  let bleepEngine = null;
+  let bleepState = $state({ level: 1, shuttle: 0, nextInMs: 0 });
 
   // Press-and-hold for DNF
   const pressTimers = {};
@@ -41,7 +53,12 @@
 
   onDestroy(() => {
     if (tickHandle) clearInterval(tickHandle);
+    if (bleepEngine) bleepEngine.stop();
   });
+
+  const currentEventKind = $derived(EVENTS[eventName]?.kind);
+
+  const bleepTotalShuttles = $derived(BLEEP_LEVELS[bleepState.level - 1]?.shuttles || 0);
 
   function toggleAthlete(id) {
     if (selectedIds.has(id)) selectedIds.delete(id);
@@ -67,6 +84,21 @@
         })
       };
       phase = 'field';
+      return;
+    }
+    if (cfg.kind === 'fitness') {
+      if (bleepMode === 'team') {
+        // Build empty teams; assignment happens on the team-setup screen
+        bleepTeams = Array.from({ length: bleepTeamCount }, (_, i) => ({
+          id: uid('t'),
+          name: `Team ${String.fromCharCode(65 + i)}`, // A, B, C…
+          athleteIds: new Set()
+        }));
+        phase = 'bleep-teams';
+        return;
+      }
+      // Individual mode — straight to live
+      startBleepLive('individual');
       return;
     }
     race = {
@@ -281,6 +313,207 @@
       slowest: i === slowestIdx && fastestIdx !== slowestIdx
     }));
   }
+
+  // ---------- Bleep test ----------
+
+  function toggleAthleteInTeam(teamIdx, athleteId) {
+    const t = bleepTeams[teamIdx];
+    if (t.athleteIds.has(athleteId)) t.athleteIds.delete(athleteId);
+    else {
+      // Remove from other teams first (each athlete is in exactly one team)
+      bleepTeams.forEach(other => other.athleteIds.delete(athleteId));
+      t.athleteIds.add(athleteId);
+    }
+    bleepTeams = [...bleepTeams]; // trigger reactivity
+  }
+
+  function cancelBleepTeams() {
+    bleepTeams = [];
+    phase = 'setup';
+  }
+
+  function confirmBleepTeams() {
+    const assignedCount = bleepTeams.reduce((sum, t) => sum + t.athleteIds.size, 0);
+    if (assignedCount === 0) {
+      flashHint('Assign at least one athlete to a team.');
+      return;
+    }
+    // Drop empty teams
+    bleepTeams = bleepTeams.filter(t => t.athleteIds.size > 0);
+    startBleepLive('team');
+  }
+
+  function startBleepLive(mode) {
+    if (mode === 'individual') {
+      race = {
+        event: 'Bleep test',
+        kind: 'fitness',
+        bleepMode: 'individual',
+        group,
+        date,
+        runners: [...selectedIds].map(id => {
+          const a = athletes.find(x => x.id === id);
+          return { id, name: a.name, droppedAt: null, dnf: false };
+        })
+      };
+    } else {
+      race = {
+        event: 'Bleep test',
+        kind: 'fitness',
+        bleepMode: 'team',
+        group,
+        date,
+        teams: bleepTeams.map(t => ({
+          id: t.id,
+          name: t.name,
+          memberIds: [...t.athleteIds],
+          droppedAt: null
+        }))
+      };
+    }
+    phase = 'bleep-live';
+    bleepState = { level: 1, shuttle: 0, nextInMs: 5000 };
+
+    bleepEngine = new BleepEngine({
+      onTick: (s) => { bleepState = s; },
+      onLevelChange: () => {},
+      onComplete: () => { finishBleep(true); }
+    });
+    bleepEngine.start();
+  }
+
+  function tapBleepRunner(r) {
+    if (r.dnf || r.droppedAt) return;
+    r.droppedAt = { level: bleepState.level, shuttle: bleepState.shuttle };
+    race = race;
+    checkBleepComplete();
+  }
+
+  function tapBleepTeam(t) {
+    if (t.droppedAt) return;
+    t.droppedAt = { level: bleepState.level, shuttle: bleepState.shuttle };
+    race = race;
+    checkBleepComplete();
+  }
+
+  function bleepStartPress(r) {
+    if (r.dnf || r.droppedAt) return;
+    pressTimers[r.id] = setTimeout(() => {
+      if (confirm(`Mark ${r.name} as DNF (didn't participate / withdrew)?`)) {
+        r.dnf = true;
+        race = race;
+        checkBleepComplete();
+      }
+      pressTimers[r.id] = null;
+    }, 700);
+  }
+  function bleepEndPress(r) {
+    if (pressTimers[r.id]) { clearTimeout(pressTimers[r.id]); pressTimers[r.id] = null; }
+  }
+
+  function checkBleepComplete() {
+    if (!race) return;
+    if (race.bleepMode === 'individual') {
+      const allDone = race.runners.every(r => r.droppedAt || r.dnf);
+      if (allDone) setTimeout(() => finishBleep(false), 300);
+    } else {
+      const allDone = race.teams.every(t => t.droppedAt);
+      if (allDone) setTimeout(() => finishBleep(false), 300);
+    }
+  }
+
+  function cancelBleep() {
+    if (!confirm('Discard this bleep test?')) return;
+    if (bleepEngine) { bleepEngine.stop(); bleepEngine = null; }
+    race = null;
+    phase = 'setup';
+  }
+
+  function finishBleep(forceFinish) {
+    if (bleepEngine) { bleepEngine.stop(); bleepEngine = null; }
+    if (forceFinish && race) {
+      if (race.bleepMode === 'individual') {
+        race.runners.forEach(r => {
+          if (!r.droppedAt && !r.dnf) {
+            r.droppedAt = { level: bleepState.level, shuttle: bleepState.shuttle };
+          }
+        });
+      } else {
+        race.teams.forEach(t => {
+          if (!t.droppedAt) {
+            t.droppedAt = { level: bleepState.level, shuttle: bleepState.shuttle };
+          }
+        });
+      }
+    }
+    saveBleepAndShowResults();
+  }
+
+  function bleepDistanceForLevel(level, shuttle) {
+    let total = 0;
+    for (let i = 0; i < level - 1; i++) total += BLEEP_LEVELS[i].shuttles * 20;
+    total += shuttle * 20;
+    return total;
+  }
+
+  function saveBleepAndShowResults() {
+    const newResults = [];
+    if (race.bleepMode === 'individual') {
+      race.runners.forEach(r => {
+        if (r.dnf) {
+          newResults.push({
+            id: uid('r'),
+            athleteId: r.id, athleteName: r.name,
+            event: 'Bleep test', kind: 'fitness', group: race.group,
+            date: race.date, dnf: true,
+            bleepMode: 'individual'
+          });
+          return;
+        }
+        const { level, shuttle } = r.droppedAt;
+        newResults.push({
+          id: uid('r'),
+          athleteId: r.id, athleteName: r.name,
+          event: 'Bleep test', kind: 'fitness', group: race.group,
+          date: race.date, dnf: false,
+          level, shuttle, distanceM: bleepDistanceForLevel(level, shuttle),
+          bleepMode: 'individual'
+        });
+      });
+    } else {
+      // Team mode: record same result against every team member
+      race.teams.forEach(t => {
+        const { level, shuttle } = t.droppedAt;
+        t.memberIds.forEach(aid => {
+          const a = athletes.find(x => x.id === aid);
+          if (!a) return;
+          newResults.push({
+            id: uid('r'),
+            athleteId: aid, athleteName: a.name,
+            event: 'Bleep test', kind: 'fitness', group: race.group,
+            date: race.date, dnf: false,
+            level, shuttle, distanceM: bleepDistanceForLevel(level, shuttle),
+            bleepMode: 'team',
+            teamId: t.id, teamName: t.name,
+            teamMemberIds: t.memberIds
+          });
+        });
+      });
+    }
+    const allResults = storage.getResults();
+    storage.setResults([...allResults, ...newResults]);
+
+    const customBadges = storage.getCustomBadges();
+    const badgeAwards = storage.getBadgeAwards();
+    const { awarded, updatedAwards } = checkBadges({
+      newResults, allResults, customBadges, badgeAwards
+    });
+    storage.setBadgeAwards(updatedAwards);
+
+    resultsRows = newResults;
+    awardedBadges = awarded;
+    phase = 'results';
+  }
 </script>
 
 {#if phase === 'setup'}
@@ -308,8 +541,37 @@
         <optgroup label="Field">
           {#each FIELD_EVENTS as e}<option value={e}>{e}</option>{/each}
         </optgroup>
+        <optgroup label="Fitness">
+          {#each FITNESS_EVENTS as e}<option value={e}>{e}</option>{/each}
+        </optgroup>
       </select>
     </div>
+
+    {#if currentEventKind === 'fitness'}
+      <div style="margin-top: 14px;">
+        <label class="field">Mode</label>
+        <div class="mode-toggle">
+          <button
+            type="button"
+            class:active={bleepMode === 'individual'}
+            onclick={() => bleepMode = 'individual'}
+          >Individual</button>
+          <button
+            type="button"
+            class:active={bleepMode === 'team'}
+            onclick={() => bleepMode = 'team'}
+          >Team relay</button>
+        </div>
+        {#if bleepMode === 'team'}
+          <div style="margin-top: 10px;">
+            <label class="field" for="team-count">Number of teams</label>
+            <select id="team-count" bind:value={bleepTeamCount}>
+              {#each [2, 3, 4, 5, 6] as n}<option value={n}>{n}</option>{/each}
+            </select>
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <div style="margin-top: 18px;">
       <label class="field">Athletes ({selectedIds.size} selected)</label>
@@ -333,7 +595,7 @@
     </div>
 
     <button class="primary big" onclick={startRace} style="margin-top: 20px;">
-      Start race
+      {currentEventKind === 'fitness' ? (bleepMode === 'team' ? 'Set up teams' : 'Start bleep test') : 'Start race'}
     </button>
     {#if hintMessage}<div class="hint">{hintMessage}</div>{/if}
   </div>
@@ -415,6 +677,124 @@
       {/each}
     </div>
     {#if hintMessage}<div class="hint">{hintMessage}</div>{/if}
+  </div>
+{:else if phase === 'bleep-teams'}
+  <div class="bleep-teams">
+    <div class="live-header">
+      <div style="font-weight: 600;">Set up teams · {race?.group || group}</div>
+      <div class="live-actions">
+        <button onclick={cancelBleepTeams}>Cancel</button>
+        <button class="primary" onclick={confirmBleepTeams}>Start bleep test</button>
+      </div>
+    </div>
+    <p class="muted small" style="margin: 0 0 12px;">Tap an athlete to assign them to a team. Tap their chip in the team to remove them.</p>
+
+    {#each bleepTeams as t, i}
+      <div class="team-card">
+        <input type="text" bind:value={t.name} class="team-name-input" />
+        <div class="team-members">
+          {#if t.athleteIds.size === 0}
+            <span class="dim small">No one assigned yet</span>
+          {:else}
+            {#each [...t.athleteIds] as aid}
+              {@const a = athletes.find(x => x.id === aid)}
+              {#if a}
+                <button type="button" class="member-chip" onclick={() => toggleAthleteInTeam(i, aid)}>
+                  {a.name} ×
+                </button>
+              {/if}
+            {/each}
+          {/if}
+        </div>
+        <div class="team-add">
+          <div class="muted small" style="margin-bottom: 6px;">Add to {t.name}:</div>
+          <div class="athlete-grid small-grid">
+            {#each [...selectedIds] as aid}
+              {@const a = athletes.find(x => x.id === aid)}
+              {@const inAnyTeam = bleepTeams.some(other => other.athleteIds.has(aid))}
+              {#if a && !inAnyTeam}
+                <button type="button" class="athlete-chip small" onclick={() => toggleAthleteInTeam(i, aid)}>
+                  {a.name}
+                </button>
+              {/if}
+            {/each}
+          </div>
+        </div>
+      </div>
+    {/each}
+    {#if hintMessage}<div class="hint">{hintMessage}</div>{/if}
+  </div>
+{:else if phase === 'bleep-live'}
+  <div class="bleep-live">
+    <div class="live-header">
+      <div>
+        <div class="muted" style="font-size: 13px;">Bleep test · {race.group} · {race.bleepMode === 'team' ? 'Team relay' : 'Individual'}</div>
+        <div class="bleep-position">
+          <div class="bleep-level">Level {bleepState.level}</div>
+          <div class="bleep-countdown">Next beep in {Math.ceil(bleepState.nextInMs / 1000)}s</div>
+        </div>
+      </div>
+      <div class="live-actions">
+        <button onclick={cancelBleep}>Cancel</button>
+        <button onclick={() => finishBleep(true)}>End test</button>
+      </div>
+    </div>
+
+    <!-- Shuttle progress bar for current level -->
+    <div class="shuttle-bar" aria-label="Shuttle progress for current level">
+      {#each Array(bleepTotalShuttles) as _, j}
+        <span class="shuttle-pip" class:lit={j < bleepState.shuttle}></span>
+      {/each}
+    </div>
+    <p class="muted small" style="margin: 8px 0 12px;">
+      Shuttle {bleepState.shuttle} of {bleepTotalShuttles} · Tap a {race.bleepMode === 'team' ? 'team' : 'runner'} when they drop out.
+    </p>
+
+    {#if race.bleepMode === 'individual'}
+      <div class="runner-grid">
+        {#each race.runners as r}
+          <button
+            type="button"
+            class="runner-tile"
+            class:finished={r.droppedAt}
+            class:dnf={r.dnf}
+            onclick={() => tapBleepRunner(r)}
+            onmousedown={() => bleepStartPress(r)}
+            onmouseup={() => bleepEndPress(r)}
+            onmouseleave={() => bleepEndPress(r)}
+            ontouchstart={() => bleepStartPress(r)}
+            ontouchend={() => bleepEndPress(r)}
+          >
+            <div class="runner-name">{r.name}</div>
+            <div class="runner-state mono">
+              {#if r.dnf}DNF
+              {:else if r.droppedAt}L{r.droppedAt.level}.{r.droppedAt.shuttle}
+              {:else}Running
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <div class="runner-grid">
+        {#each race.teams as t}
+          <button
+            type="button"
+            class="runner-tile team"
+            class:finished={t.droppedAt}
+            onclick={() => tapBleepTeam(t)}
+          >
+            <div class="runner-name">{t.name}</div>
+            <div class="muted small">{t.memberIds.length} athlete{t.memberIds.length === 1 ? '' : 's'}</div>
+            <div class="runner-state mono" style="margin-top: 4px;">
+              {#if t.droppedAt}L{t.droppedAt.level}.{t.droppedAt.shuttle}
+              {:else}Running
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
 {:else if phase === 'results'}
   {@const { sorted, dnfs, isField } = sortedResults}
@@ -699,9 +1079,95 @@
   .badge-detail-row:last-child { border-bottom: none; }
   .badge-detail-name { font-size: 14px; font-weight: 500; }
   .small { font-size: 12px; }
+
+  /* Mode toggle for individual / team */
+  .mode-toggle { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: var(--radius-sm); }
+  .mode-toggle button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    min-height: 40px;
+    color: var(--text-2);
+    font-weight: 500;
+  }
+  .mode-toggle button.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+
+  /* Team setup cards */
+  .team-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .team-name-input {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 4px 6px;
+    margin-left: -6px;
+  }
+  .team-name-input:hover, .team-name-input:focus {
+    background: var(--surface-2);
+    border-color: var(--border);
+  }
+  .team-members {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-height: 36px;
+    margin-bottom: 12px;
+  }
+  .member-chip {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+    padding: 6px 10px;
+    min-height: 0;
+    font-size: 13px;
+  }
+  .small-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important; gap: 6px; }
+  .athlete-chip.small { padding: 8px 10px; min-height: 40px; font-size: 13px; }
+
+  /* Bleep live screen */
+  .bleep-position { display: flex; align-items: baseline; gap: 12px; }
+  .bleep-level {
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -1px;
+  }
+  .bleep-countdown {
+    font-size: 14px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .shuttle-bar {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .shuttle-pip {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border-strong);
+    transition: background 0.15s;
+  }
+  .shuttle-pip.lit { background: var(--accent); }
+  .runner-tile.team {
+    /* Slightly different style for team tiles */
+  }
+
   @media (max-width: 600px) {
     .setup-grid { grid-template-columns: 1fr; }
     .clock { font-size: 32px; }
+    .bleep-level { font-size: 28px; }
     .field-row { grid-template-columns: 1fr 60px 60px 60px 60px; font-size: 13px; }
   }
 </style>

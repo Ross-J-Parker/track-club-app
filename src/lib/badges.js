@@ -1,6 +1,27 @@
 // Pure badge-checking logic. No storage, no side effects.
-// Takes the new results, the full history, and the custom badges + awards.
-// Returns a list of awarded badges and an updated awards map.
+
+// Get a single comparable score from a result for ranking purposes.
+// Higher-is-better convention: we negate times so lower-is-better events also work with "isBetter = candidate > current".
+function scoreOf(r) {
+  if (r.kind === 'field') return r.bestAttempt || 0;
+  if (r.kind === 'fitness') return (r.level || 0) * 100 + (r.shuttle || 0);
+  // track: lower time is better -> negate so we can use "greater than"
+  return -1 * (r.finalTime || Infinity);
+}
+
+function isBetter(candidate, currentBest) {
+  return scoreOf(candidate) > scoreOf(currentBest);
+}
+
+function pbDetail(r, bestPrior) {
+  if (r.kind === 'field') {
+    return `+${(r.bestAttempt - bestPrior.bestAttempt).toFixed(2)} m`;
+  }
+  if (r.kind === 'fitness') {
+    return `Level ${r.level}.${r.shuttle} (was L${bestPrior.level}.${bestPrior.shuttle})`;
+  }
+  return `${((bestPrior.finalTime - r.finalTime) / 1000).toFixed(1)}s faster`;
+}
 
 export function checkBadges({ newResults, allResults, customBadges, badgeAwards }) {
   const awarded = [];
@@ -8,7 +29,6 @@ export function checkBadges({ newResults, allResults, customBadges, badgeAwards 
   const updatedAwards = { ...badgeAwards };
 
   finishers.forEach(r => {
-    const isField = r.kind === 'field';
     const allPrior = allResults.filter(x =>
       x.athleteId === r.athleteId && x.event === r.event && x.id !== r.id && !x.dnf
     );
@@ -16,22 +36,13 @@ export function checkBadges({ newResults, allResults, customBadges, badgeAwards 
     // First time / PB
     if (allPrior.length === 0) {
       awarded.push({ athleteName: r.athleteName, badge: 'First time at this event' });
-    } else if (isField) {
-      const bestPrior = Math.max(...allPrior.map(x => x.bestAttempt || 0));
-      if (r.bestAttempt > bestPrior) {
-        awarded.push({
-          athleteName: r.athleteName,
-          badge: 'Personal best',
-          detail: `+${(r.bestAttempt - bestPrior).toFixed(2)} m`
-        });
-      }
     } else {
-      const bestPrior = Math.min(...allPrior.map(x => x.finalTime));
-      if (r.finalTime < bestPrior) {
+      const bestPrior = allPrior.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, allPrior[0]);
+      if (isBetter(r, bestPrior)) {
         awarded.push({
           athleteName: r.athleteName,
           badge: 'Personal best',
-          detail: `${((bestPrior - r.finalTime) / 1000).toFixed(1)}s faster`
+          detail: pbDetail(r, bestPrior)
         });
       }
     }
@@ -41,10 +52,8 @@ export function checkBadges({ newResults, allResults, customBadges, badgeAwards 
     if (clubPrior.length === 0) {
       awarded.push({ athleteName: r.athleteName, badge: 'Club record', detail: `${r.event} (first ever)` });
     } else {
-      const clubBest = isField
-        ? Math.max(...clubPrior.map(x => x.bestAttempt || 0))
-        : Math.min(...clubPrior.map(x => x.finalTime));
-      if ((isField && r.bestAttempt > clubBest) || (!isField && r.finalTime < clubBest)) {
+      const clubBest = clubPrior.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, clubPrior[0]);
+      if (isBetter(r, clubBest)) {
         awarded.push({ athleteName: r.athleteName, badge: 'Club record', detail: r.event });
       }
     }
@@ -54,31 +63,36 @@ export function checkBadges({ newResults, allResults, customBadges, badgeAwards 
       x.event === r.event && x.group === r.group && x.id !== r.id && !x.dnf
     );
     if (groupPrior.length > 0) {
-      const groupBest = isField
-        ? Math.max(...groupPrior.map(x => x.bestAttempt || 0))
-        : Math.min(...groupPrior.map(x => x.finalTime));
-      if ((isField && r.bestAttempt > groupBest) || (!isField && r.finalTime < groupBest)) {
+      const groupBest = groupPrior.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, groupPrior[0]);
+      if (isBetter(r, groupBest)) {
         awarded.push({ athleteName: r.athleteName, badge: `${r.group} record`, detail: r.event });
       }
     }
   });
 
-  // Local hero — best in session
+  // Local hero — best in this session
   if (finishers.length >= 2) {
-    const isField = finishers[0].kind === 'field';
-    const winner = isField
-      ? [...finishers].sort((a, b) => (b.bestAttempt || 0) - (a.bestAttempt || 0))[0]
-      : [...finishers].sort((a, b) => a.finalTime - b.finalTime)[0];
+    const winner = finishers.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, finishers[0]);
+    // For team bleep tests, multiple finishers share the same score; pick first
     awarded.push({ athleteName: winner.athleteName, badge: 'Local hero', detail: 'best in session' });
   }
 
   // Custom sub-X challenges
   for (const r of finishers) {
-    const isField = r.kind === 'field';
     for (const b of customBadges) {
       if (b.event !== r.event) continue;
       if (b.group && b.group !== r.group) continue;
-      const hit = isField ? r.bestAttempt >= b.target : r.finalTime <= b.target * 1000;
+      // Determine "hit": kind-specific
+      let hit = false;
+      if (r.kind === 'field') hit = r.bestAttempt >= b.target;
+      else if (r.kind === 'fitness') {
+        // For fitness, target is encoded as level*100 + shuttle, e.g. 905 = L9.5
+        // For now we'll treat it as a minimum level (rounded)
+        const score = (r.level || 0) * 100 + (r.shuttle || 0);
+        hit = score >= b.target;
+      } else {
+        hit = r.finalTime <= b.target * 1000;
+      }
       if (!hit) continue;
       const key = `${b.id}:${r.athleteId}`;
       if (!updatedAwards[key]) {
@@ -93,8 +107,7 @@ export function checkBadges({ newResults, allResults, customBadges, badgeAwards 
   return { awarded, updatedAwards };
 }
 
-// Replay all badges ever earned by an athlete, ordered by date.
-// Used for the athlete profile view, where we want their full collection.
+// Replay all badges ever earned by an athlete, ordered most-recent first.
 export function replayBadgesForAthlete({ athleteId, allResults, customBadges }) {
   return replayCorrectly({ athleteId, allResults, customBadges });
 }
@@ -106,29 +119,22 @@ function replayCorrectly({ athleteId, allResults, customBadges }) {
 
   const earned = [];
   const historyByEvent = {};
-  const customUnlocked = {}; // key: badgeId:athleteId -> true
+  const customUnlocked = {};
 
   for (const r of sorted) {
-    const isField = r.kind === 'field';
     const prior = historyByEvent[r.event] || [];
     const priorByThisAthlete = prior.filter(x => x.athleteId === r.athleteId);
     const priorInGroup = prior.filter(x => x.group === r.group);
-
     const isThis = r.athleteId === athleteId;
 
     if (isThis) {
-      // PB
+      // PB / first time
       if (priorByThisAthlete.length === 0) {
         earned.push({ date: r.date, badge: 'First time at this event', detail: r.event, event: r.event, group: r.group });
-      } else if (isField) {
-        const bestPrior = Math.max(...priorByThisAthlete.map(x => x.bestAttempt || 0));
-        if (r.bestAttempt > bestPrior) {
-          earned.push({ date: r.date, badge: 'Personal best', detail: `${r.event}: +${(r.bestAttempt - bestPrior).toFixed(2)} m`, event: r.event, group: r.group });
-        }
       } else {
-        const bestPrior = Math.min(...priorByThisAthlete.map(x => x.finalTime));
-        if (r.finalTime < bestPrior) {
-          earned.push({ date: r.date, badge: 'Personal best', detail: `${r.event}: ${((bestPrior - r.finalTime) / 1000).toFixed(1)}s faster`, event: r.event, group: r.group });
+        const bestPrior = priorByThisAthlete.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, priorByThisAthlete[0]);
+        if (isBetter(r, bestPrior)) {
+          earned.push({ date: r.date, badge: 'Personal best', detail: `${r.event}: ${pbDetail(r, bestPrior)}`, event: r.event, group: r.group });
         }
       }
 
@@ -136,20 +142,16 @@ function replayCorrectly({ athleteId, allResults, customBadges }) {
       if (prior.length === 0) {
         earned.push({ date: r.date, badge: 'Club record', detail: `${r.event} (first ever)`, event: r.event, group: r.group });
       } else {
-        const clubBest = isField
-          ? Math.max(...prior.map(x => x.bestAttempt || 0))
-          : Math.min(...prior.map(x => x.finalTime));
-        if ((isField && r.bestAttempt > clubBest) || (!isField && r.finalTime < clubBest)) {
+        const clubBest = prior.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, prior[0]);
+        if (isBetter(r, clubBest)) {
           earned.push({ date: r.date, badge: 'Club record', detail: r.event, event: r.event, group: r.group });
         }
       }
 
       // Group record
       if (priorInGroup.length > 0) {
-        const groupBest = isField
-          ? Math.max(...priorInGroup.map(x => x.bestAttempt || 0))
-          : Math.min(...priorInGroup.map(x => x.finalTime));
-        if ((isField && r.bestAttempt > groupBest) || (!isField && r.finalTime < groupBest)) {
+        const groupBest = priorInGroup.reduce((best, x) => scoreOf(x) > scoreOf(best) ? x : best, priorInGroup[0]);
+        if (isBetter(r, groupBest)) {
           earned.push({ date: r.date, badge: `${r.group} record`, detail: r.event, event: r.event, group: r.group });
         }
       }
@@ -158,7 +160,10 @@ function replayCorrectly({ athleteId, allResults, customBadges }) {
       for (const b of customBadges) {
         if (b.event !== r.event) continue;
         if (b.group && b.group !== r.group) continue;
-        const hit = isField ? r.bestAttempt >= b.target : r.finalTime <= b.target * 1000;
+        let hit = false;
+        if (r.kind === 'field') hit = r.bestAttempt >= b.target;
+        else if (r.kind === 'fitness') hit = ((r.level || 0) * 100 + (r.shuttle || 0)) >= b.target;
+        else hit = r.finalTime <= b.target * 1000;
         if (!hit) continue;
         const key = `${b.id}:${r.athleteId}`;
         if (!customUnlocked[key]) {
@@ -169,11 +174,14 @@ function replayCorrectly({ athleteId, allResults, customBadges }) {
         }
       }
     } else {
-      // Still need to track other athletes' first-time custom unlocks so we don't double-credit
+      // Track other athletes' first unlocks (so we don't double-credit)
       for (const b of customBadges) {
         if (b.event !== r.event) continue;
         if (b.group && b.group !== r.group) continue;
-        const hit = isField ? r.bestAttempt >= b.target : r.finalTime <= b.target * 1000;
+        let hit = false;
+        if (r.kind === 'field') hit = r.bestAttempt >= b.target;
+        else if (r.kind === 'fitness') hit = ((r.level || 0) * 100 + (r.shuttle || 0)) >= b.target;
+        else hit = r.finalTime <= b.target * 1000;
         if (!hit) continue;
         const key = `${b.id}:${r.athleteId}`;
         customUnlocked[key] = true;
@@ -184,6 +192,5 @@ function replayCorrectly({ athleteId, allResults, customBadges }) {
     historyByEvent[r.event].push(r);
   }
 
-  // Sort earned most-recent first
   return earned.sort((a, b) => b.date.localeCompare(a.date));
 }

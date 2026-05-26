@@ -42,7 +42,9 @@
   }
 
   function fmtPbValue(pb) {
-    return pb.kind === 'field' ? `${pb.value.toFixed(2)} m` : fmtTime(pb.value);
+    if (pb.kind === 'field') return `${pb.value.toFixed(2)} m`;
+    if (pb.kind === 'fitness') return `Level ${pb.level}.${pb.shuttle}`;
+    return fmtTime(pb.value);
   }
 </script>
 

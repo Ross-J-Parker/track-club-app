@@ -1,35 +1,41 @@
 <script>
-  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, GROUPS, fmtTime } from '$lib/events.js';
+  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, FITNESS_EVENTS, GROUPS, fmtTime } from '$lib/events.js';
 
   let { data } = $props();
   const results = $derived(data.results.filter(r => !r.dnf));
 
-  function bestFor(filterFn, kind) {
+  // Higher-is-better score for any result kind. (Times are negated.)
+  function scoreOf(r) {
+    if (r.kind === 'field') return r.bestAttempt || 0;
+    if (r.kind === 'fitness') return (r.level || 0) * 100 + (r.shuttle || 0);
+    return -1 * (r.finalTime || Infinity);
+  }
+
+  function bestFor(filterFn) {
     const subset = results.filter(filterFn);
     if (subset.length === 0) return null;
-    return kind === 'field'
-      ? subset.reduce((best, r) => (r.bestAttempt > (best?.bestAttempt || 0) ? r : best), null)
-      : subset.reduce((best, r) => (r.finalTime < (best?.finalTime || Infinity) ? r : best), null);
+    return subset.reduce((best, r) => scoreOf(r) > scoreOf(best) ? r : best, subset[0]);
   }
 
-  function valueFor(r, kind) {
+  function valueFor(r) {
     if (!r) return null;
-    return kind === 'field' ? `${r.bestAttempt.toFixed(2)} m` : fmtTime(r.finalTime);
+    if (r.kind === 'field') return `${r.bestAttempt.toFixed(2)} m`;
+    if (r.kind === 'fitness') return `L${r.level}.${r.shuttle}`;
+    return fmtTime(r.finalTime);
   }
 
-  const allEvents = [...TRACK_EVENTS, ...FIELD_EVENTS];
+  const allEvents = [...TRACK_EVENTS, ...FIELD_EVENTS, ...FITNESS_EVENTS];
 </script>
 
 <h3 style="font-size: 15px; margin-bottom: 10px;">Club records</h3>
 <div class="card">
   {#each allEvents as e}
-    {@const kind = EVENTS[e].kind}
-    {@const rec = bestFor(r => r.event === e, kind)}
+    {@const rec = bestFor(r => r.event === e)}
     <div class="record-row">
       <div>{e}</div>
       <div>
         {#if rec}
-          <span class="mono">{valueFor(rec, kind)}</span>
+          <span class="mono">{valueFor(rec)}</span>
           <span class="muted small">{rec.athleteName}</span>
         {:else}
           <span class="dim">—</span>
@@ -41,7 +47,7 @@
 
 <h3 style="font-size: 15px; margin: 20px 0 10px;">Group records</h3>
 {#each GROUPS as g}
-  {@const anyForGroup = allEvents.some(e => bestFor(r => r.event === e && r.group === g, EVENTS[e].kind))}
+  {@const anyForGroup = allEvents.some(e => bestFor(r => r.event === e && r.group === g))}
   <div class="group-block">
     <div class="group-label">{g}</div>
     <div class="card">
@@ -49,13 +55,12 @@
         <div class="dim small">No results yet in this group.</div>
       {:else}
         {#each allEvents as e}
-          {@const kind = EVENTS[e].kind}
-          {@const rec = bestFor(r => r.event === e && r.group === g, kind)}
+          {@const rec = bestFor(r => r.event === e && r.group === g)}
           {#if rec}
             <div class="record-row">
               <div>{e}</div>
               <div>
-                <span class="mono">{valueFor(rec, kind)}</span>
+                <span class="mono">{valueFor(rec)}</span>
                 <span class="muted small">{rec.athleteName}</span>
               </div>
             </div>
