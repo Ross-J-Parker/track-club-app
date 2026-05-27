@@ -5,7 +5,6 @@ export const prerender = false;
 
 export function load() {
   return {
-    customBadges: storage.getCustomBadges(),
-    badgeAwards: storage.getBadgeAwards()
+    athletes: storage.getAthletes()
   };
 }

@@ -5,6 +5,8 @@ export const prerender = false;
 
 export function load() {
   return {
-    results: storage.getResults()
+    results: storage.getResults(),
+    customBadges: storage.getCustomBadges(),
+    badgeAwards: storage.getBadgeAwards()
   };
 }

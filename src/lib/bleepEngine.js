@@ -32,6 +32,8 @@ export class BleepEngine {
     const prepMs = 5000;
     this.nextBeepAt = performance.now() + prepMs;
     this.playStartTone();
+    // Announce starting level a moment after the start tone
+    this.announceLevel(1);
     this.scheduleNextBeep();
     this.startTicker();
   }
@@ -40,6 +42,10 @@ export class BleepEngine {
     this.running = false;
     if (this.beepTimeout) clearTimeout(this.beepTimeout);
     if (this.tickHandle) cancelAnimationFrame(this.tickHandle);
+    // Cut off any pending speech
+    try {
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    } catch {}
     if (this.ctx) {
       try { this.ctx.close(); } catch {}
       this.ctx = null;
@@ -123,6 +129,26 @@ export class BleepEngine {
     this.playTone(1400, 100);
     setTimeout(() => this.playTone(1400, 100), 150);
     setTimeout(() => this.playTone(1400, 100), 300);
+    // After the beeps, speak the level number
+    this.announceLevel(this.level);
+  }
+
+  announceLevel(level) {
+    if (typeof speechSynthesis === 'undefined') return;
+    try {
+      // Cancel any pending announcements (rapid level transitions edge case)
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(`Level ${level}`);
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+      // Slight delay so it lands after the three beeps finish (~400ms total)
+      setTimeout(() => {
+        if (this.running) speechSynthesis.speak(u);
+      }, 500);
+    } catch {
+      // If speech synthesis isn't available, we silently degrade — beeps still play
+    }
   }
 
   playStartTone() {

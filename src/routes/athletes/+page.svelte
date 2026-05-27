@@ -12,7 +12,82 @@
   let editingId = $state(null);
   let editingName = $state('');
 
+  // CSV upload state
+  let fileInput;
+  let csvPreview = $state(null); // { fresh: [], duplicates: [] }
+
   function persist() { storage.setAthletes(athletes); }
+
+  function handleFileChosen(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result;
+        parseCSVPreview(text);
+      } catch (err) {
+        alert('Could not read that file.');
+      }
+    };
+    reader.readAsText(file);
+    // Reset the input so picking the same file again triggers onchange
+    e.target.value = '';
+  }
+
+  function parseCSVPreview(text) {
+    // Lenient parser: split on newlines, then on first comma per line.
+    // Take the first column as the name. Strip surrounding quotes/whitespace.
+    // Skip blank rows. Detect and skip a header row ("name", "athlete name", etc.).
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const names = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const firstField = line.split(',')[0].trim().replace(/^["']|["']$/g, '');
+      if (!firstField) continue;
+      // Skip a likely header on the first line
+      if (i === 0 && /^(name|athlete|first ?name|full ?name)$/i.test(firstField)) continue;
+      names.push(firstField);
+    }
+    // De-duplicate within the file itself
+    const seenInFile = new Set();
+    const uniq = [];
+    for (const n of names) {
+      const key = n.toLowerCase();
+      if (seenInFile.has(key)) continue;
+      seenInFile.add(key);
+      uniq.push(n);
+    }
+    // Split into fresh vs duplicates of existing athletes
+    const existingNames = new Set(athletes.map(a => a.name.toLowerCase()));
+    const fresh = [];
+    const duplicates = [];
+    for (const n of uniq) {
+      if (existingNames.has(n.toLowerCase())) duplicates.push(n);
+      else fresh.push(n);
+    }
+    if (fresh.length === 0 && duplicates.length === 0) {
+      alert('No athlete names found in that file.');
+      return;
+    }
+    csvPreview = { fresh, duplicates };
+  }
+
+  function commitCSVImport() {
+    if (!csvPreview) return;
+    const added = csvPreview.fresh.map(name => ({ id: uid('a'), name }));
+    athletes = [...athletes, ...added];
+    persist();
+    const count = added.length;
+    csvPreview = null;
+    showToast(`Imported ${count} athlete${count === 1 ? '' : 's'}`, () => {
+      const ids = new Set(added.map(a => a.id));
+      athletes = athletes.filter(a => !ids.has(a.id));
+      persist();
+    });
+  }
+
+  function cancelCSVImport() { csvPreview = null; }
 
   function addAthletes() {
     const names = inputValue.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
@@ -101,7 +176,20 @@
   />
   <button class="primary" onclick={addAthletes}>Add</button>
 </div>
-<div class="dim small">Separate multiple names with commas or new lines.</div>
+<div class="add-actions">
+  <span class="dim small">Separate multiple names with commas or new lines.</span>
+  <input
+    type="file"
+    accept=".csv,text/csv,text/plain"
+    style="display: none;"
+    bind:this={fileInput}
+    onchange={handleFileChosen}
+  />
+  <button class="csv-btn" onclick={() => fileInput?.click()}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+    Upload CSV
+  </button>
+</div>
 
 <div class="list">
   {#if athletes.length === 0}
@@ -148,6 +236,43 @@
   {/if}
 </div>
 
+{#if csvPreview}
+  <div class="picker-overlay" onclick={cancelCSVImport}>
+    <div class="picker-card csv-card" onclick={(e) => e.stopPropagation()}>
+      <h3 class="picker-title">Import preview</h3>
+      <p class="muted small" style="margin: 0 0 12px;">
+        {csvPreview.fresh.length} new · {csvPreview.duplicates.length} duplicate{csvPreview.duplicates.length === 1 ? '' : 's'} (will be skipped)
+      </p>
+      {#if csvPreview.fresh.length > 0}
+        <div class="preview-section">
+          <div class="preview-label">Will be added</div>
+          <div class="preview-list">
+            {#each csvPreview.fresh as name}
+              <div class="preview-row">{name}</div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      {#if csvPreview.duplicates.length > 0}
+        <div class="preview-section">
+          <div class="preview-label">Already exist</div>
+          <div class="preview-list dim">
+            {#each csvPreview.duplicates as name}
+              <div class="preview-row">{name}</div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      <div class="row" style="margin-top: 16px; justify-content: flex-end;">
+        <button onclick={cancelCSVImport}>Cancel</button>
+        <button class="primary" onclick={commitCSVImport} disabled={csvPreview.fresh.length === 0}>
+          Import {csvPreview.fresh.length}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if toast}
   <div class="toast" role="status">
     <span>{toast.message}</span>
@@ -164,8 +289,58 @@
     margin-bottom: 6px;
   }
   .add-row input { flex: 1; }
-  .small { font-size: 12px; margin-bottom: 18px; }
+  .add-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .add-actions .small { margin-bottom: 0; }
+  .csv-btn {
+    padding: 6px 12px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+  .small { font-size: 12px; }
   .list { display: flex; flex-direction: column; gap: 6px; }
+
+  /* CSV preview overlay (shares pattern with team picker on bleep page) */
+  .picker-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 200; padding: 16px;
+  }
+  .picker-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .picker-title { font-weight: 600; margin: 0 0 4px; font-size: 16px; }
+  .preview-section { margin-bottom: 14px; }
+  .preview-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .preview-list {
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-size: 13px;
+  }
+  .preview-row { padding: 3px 0; }
   .athlete-row {
     display: flex;
     align-items: center;

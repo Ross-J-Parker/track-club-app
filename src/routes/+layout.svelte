@@ -4,10 +4,10 @@
 
   const tabs = [
     { href: '/', label: 'Time', icon: 'stopwatch' },
+    { href: '/bleep', label: 'Bleep', icon: 'bolt' },
     { href: '/athletes', label: 'Athletes', icon: 'users' },
     { href: '/history', label: 'History', icon: 'history' },
-    { href: '/records', label: 'Records', icon: 'trophy' },
-    { href: '/badges', label: 'Badges', icon: 'medal' }
+    { href: '/achievements', label: 'Achievements', icon: 'trophy' }
   ];
 
   // The "active" check needs to handle nested routes too — e.g. /athletes/abc-123 still highlights Athletes
@@ -47,8 +47,8 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
         {:else if tab.icon === 'trophy'}
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
-        {:else if tab.icon === 'medal'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/></svg>
+        {:else if tab.icon === 'bolt'}
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
         {/if}
         <span class="tab-label">{tab.label}</span>
       </a>
