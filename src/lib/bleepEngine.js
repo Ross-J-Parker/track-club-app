@@ -6,11 +6,10 @@
 import { BLEEP_LEVELS } from './bleep.js';
 
 export class BleepEngine {
-  constructor({ onTick, onLevelChange, onComplete, levels, onDiag }) {
+  constructor({ onTick, onLevelChange, onComplete, levels }) {
     this.onTick = onTick;             // ({level, shuttle, nextInMs}) => void
     this.onLevelChange = onLevelChange; // (level) => void
     this.onComplete = onComplete;     // () => void
-    this.onDiag = onDiag;             // (msg) => void  — for on-screen debugging
     this.levels = levels || BLEEP_LEVELS;
     this.ctx = null;
     this.running = false;
@@ -20,27 +19,13 @@ export class BleepEngine {
     this.tickHandle = null;
   }
 
-  diag(msg) {
-    if (this.onDiag) this.onDiag(msg);
-  }
-
   start() {
     if (this.running) return;
-
-    // Diagnostic: what does the device report about speech synthesis?
-    if (typeof speechSynthesis === 'undefined') {
-      this.diag('❌ speechSynthesis API is NOT available');
-    } else {
-      const voices = speechSynthesis.getVoices();
-      this.diag(`✓ speechSynthesis available, ${voices.length} voices${voices.length ? ` (e.g. "${voices[0].name}" ${voices[0].lang})` : ''}`);
-      this.diag(`State: speaking=${speechSynthesis.speaking}, paused=${speechSynthesis.paused}, pending=${speechSynthesis.pending}`);
-    }
 
     // iOS quirk: speech synthesis must be triggered synchronously inside the user
     // gesture handler. The moment we hit any `await`, the gesture context is lost
     // and iOS silently blocks speech. So we speak "Three" BEFORE any audio setup,
-    // and we don't await the audio context resume (it'll resolve in the background;
-    // the first beep is 3 seconds away regardless).
+    // and we don't await the audio context resume.
     if (typeof speechSynthesis !== 'undefined') {
       try { speechSynthesis.cancel(); } catch {}
     }
@@ -169,24 +154,23 @@ export class BleepEngine {
 
   // Generic speech helper. Speaks the given text immediately.
   // Silently no-ops if speech synthesis isn't supported.
+  //
+  // iOS WebKit quirk: an utterance with no event handlers attached can be garbage-
+  // collected before it speaks. Attaching `onstart`/`onend`/`onerror` (even empty)
+  // keeps the utterance reachable until iOS actually utters it. This is the real
+  // fix for "speech doesn't fire on iPhone" that was puzzling us in May 2026.
   speak(text) {
-    if (typeof speechSynthesis === 'undefined') {
-      this.diag(`speak("${text}") → API missing`);
-      return;
-    }
+    if (typeof speechSynthesis === 'undefined') return;
     try {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.0;
       u.pitch = 1.0;
       u.volume = 1.0;
-      u.onstart = () => this.diag(`▶ "${text}" started`);
-      u.onend = () => this.diag(`✓ "${text}" ended`);
-      u.onerror = (e) => this.diag(`❌ "${text}" error: ${e.error || 'unknown'}`);
+      u.onstart = () => {}; // keeps utterance alive on iOS until it speaks
+      u.onend = () => {};
+      u.onerror = () => {};
       speechSynthesis.speak(u);
-      this.diag(`speak("${text}") → queued`);
-    } catch (e) {
-      this.diag(`speak("${text}") → exception: ${e.message}`);
-    }
+    } catch {}
   }
 
   announceLevel(level) {
@@ -194,16 +178,11 @@ export class BleepEngine {
     try {
       // Cancel any pending announcements (rapid level transitions edge case)
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(`Level ${level}`);
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      u.volume = 1.0;
-      // Slight delay so it lands after the three beeps finish (~400ms total)
-      setTimeout(() => {
-        if (this.running) speechSynthesis.speak(u);
-      }, 500);
-    } catch {
-      // If speech synthesis isn't available, we silently degrade — beeps still play
-    }
+    } catch {}
+    // Slight delay so it lands after the three beeps finish (~400ms total).
+    // We use the shared `speak()` helper so iOS gets the handler-attached utterance.
+    setTimeout(() => {
+      if (this.running) this.speak(`Level ${level}`);
+    }, 500);
   }
 }
