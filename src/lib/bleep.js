@@ -37,20 +37,24 @@ const LEVEL_SPEC = [
 ];
 
 // Build a level table for a given shuttle distance in metres.
-// `slowdown` adds tolerance to every interval (e.g. 0.2 = 20% more time per shuttle),
-// used for the uphill 5m variant where athletes move slower than flat-ground pace.
-export function buildLevels(distanceM, slowdown = 0) {
+// `turnaroundMs` adds a fixed dead time per shuttle for the deceleration/turn/re-acceleration
+// that isn't captured by the nominal running speed. This dominates short-shuttle drills
+// (e.g. 5m hills) where the actual running portion is small.
+export function buildLevels(distanceM, turnaroundMs = 0) {
   return LEVEL_SPEC.map(l => ({
     ...l,
-    intervalMs: Math.round(intervalMs(l.speed, distanceM) * (1 + slowdown))
+    intervalMs: intervalMs(l.speed, distanceM) + turnaroundMs
   }));
 }
 
 // Default 20m table (kept for backwards compatibility with existing imports)
 export const BLEEP_LEVELS = buildLevels(20);
 
-// Supported bleep variants
+// Supported bleep variants.
+// 20m: no turnaround allowance — the running time dominates and matches the published standard.
+// 5m hills: ~2.9s turnaround per shuttle, modelling the reality that most of a 5m shuttle is
+//           spent decelerating, turning, and re-accelerating, especially on a hill.
 export const BLEEP_VARIANTS = {
-  'Bleep test (20m)': { distanceM: 20, slowdown: 0, event: 'Bleep test' },
-  'Bleep test (5m hills)': { distanceM: 5, slowdown: 0.2, event: 'Bleep test (5m)' }
+  'Bleep test (20m)': { distanceM: 20, turnaroundMs: 0, event: 'Bleep test' },
+  'Bleep test (5m hills)': { distanceM: 5, turnaroundMs: 2900, event: 'Bleep test (5m)' }
 };

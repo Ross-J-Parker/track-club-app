@@ -150,7 +150,7 @@
   function startLive(m) {
     const cfg = variantConfig;
     const eventName = cfg.event; // 'Bleep test' or 'Bleep test (5m)'
-    activeLevels = buildLevels(cfg.distanceM, cfg.slowdown || 0);
+    activeLevels = buildLevels(cfg.distanceM, cfg.turnaroundMs || 0);
 
     if (m === 'individual') {
       race = {
