@@ -52,9 +52,11 @@ export const BLEEP_LEVELS = buildLevels(20);
 
 // Supported bleep variants.
 // 20m: no turnaround allowance — the running time dominates and matches the published standard.
-// 5m hills: ~2.9s turnaround per shuttle, modelling the reality that most of a 5m shuttle is
-//           spent decelerating, turning, and re-accelerating, especially on a hill.
+// 5m hills: ~4.9s turnaround per shuttle. At a 5m shuttle distance, almost all of the time is
+//           the turn (deceleration + reversal + re-acceleration), so the running speed contributes
+//           a small share. This gives ~7s/shuttle at level 1 (comfortable fast-walking pace) and
+//           ~5.9s at level 21 (still hard but achievable).
 export const BLEEP_VARIANTS = {
   'Bleep test (20m)': { distanceM: 20, turnaroundMs: 0, event: 'Bleep test' },
-  'Bleep test (5m hills)': { distanceM: 5, turnaroundMs: 2900, event: 'Bleep test (5m)' }
+  'Bleep test (5m hills)': { distanceM: 5, turnaroundMs: 4900, event: 'Bleep test (5m)' }
 };
