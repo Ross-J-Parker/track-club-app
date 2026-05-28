@@ -30,18 +30,16 @@ export class BleepEngine {
     this.shuttle = 0;
 
     // Spoken "3, 2, 1, Go" countdown before shuttle 1.
-    // Each number is roughly 1 second apart. "Go" coincides with the first beep so
-    // athletes know exactly when shuttle 1 begins.
+    // The FIRST utterance must fire synchronously inside the user-gesture handler
+    // (i.e. without setTimeout) or iOS Safari/WebKit will block all subsequent speech.
+    // Speaking "Three" immediately unlocks the speech engine; the rest is scheduled.
     const stepMs = 1000;
-    const countdown = ['3', '2', '1'];
-    countdown.forEach((n, i) => {
-      setTimeout(() => {
-        if (this.running) this.speak(n);
-      }, i * stepMs);
-    });
+    this.speak('Three');
+    setTimeout(() => { if (this.running) this.speak('Two'); }, stepMs);
+    setTimeout(() => { if (this.running) this.speak('One'); }, stepMs * 2);
 
-    // First beep + "Go" land together at the end of the countdown
-    const prepMs = countdown.length * stepMs;
+    // First beep + "Go" land together at the end of the countdown (3 seconds in)
+    const prepMs = stepMs * 3;
     this.nextBeepAt = performance.now() + prepMs;
     setTimeout(() => {
       if (this.running) this.speak('Go');
