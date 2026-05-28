@@ -48,6 +48,7 @@
   let race = $state(null);
   let bleepEngine = null;
   let bleepState = $state({ level: 1, shuttle: 0, nextInMs: 0 });
+  let diagLog = $state([]); // diagnostic messages from the engine — visible on screen for debugging
   const pressTimers = {};
 
   // Results
@@ -185,12 +186,17 @@
     }
     phase = 'live';
     bleepState = { level: 1, shuttle: 0, nextInMs: 5000 };
+    diagLog = []; // reset diagnostic log each test
 
     bleepEngine = new BleepEngine({
       levels: activeLevels,
       onTick: (s) => { bleepState = s; },
       onLevelChange: () => {},
-      onComplete: () => { finishLive(true); }
+      onComplete: () => { finishLive(true); },
+      onDiag: (msg) => {
+        const t = new Date().toISOString().slice(11, 23); // HH:MM:SS.sss
+        diagLog = [...diagLog, `${t} ${msg}`].slice(-30); // keep last 30 lines
+      }
     });
     bleepEngine.start();
   }
@@ -582,6 +588,17 @@
     </div>
   {/if}
 
+  {#if diagLog.length > 0}
+    <div class="diag-panel">
+      <div class="diag-title">Speech diagnostic (for debugging)</div>
+      <div class="diag-log">
+        {#each diagLog as line}
+          <div class="diag-line">{line}</div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
 {:else if phase === 'results'}
   <div class="results-header">
     <div>
@@ -792,4 +809,34 @@
   @media (max-width: 600px) {
     .bleep-level { font-size: 28px; }
   }
+
+  /* Diagnostic panel — temporary, for debugging speech synthesis on iOS */
+  .diag-panel {
+    margin-top: 24px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+  }
+  .diag-title {
+    font-weight: 600;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .diag-log {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--text-2);
+    line-height: 1.4;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .diag-line {
+    padding: 2px 0;
+    word-break: break-all;
+    border-bottom: 1px solid var(--border);
+  }
+  .diag-line:last-child { border-bottom: none; }
 </style>

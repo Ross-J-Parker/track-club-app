@@ -6,11 +6,12 @@
 import { BLEEP_LEVELS } from './bleep.js';
 
 export class BleepEngine {
-  constructor({ onTick, onLevelChange, onComplete, levels }) {
+  constructor({ onTick, onLevelChange, onComplete, levels, onDiag }) {
     this.onTick = onTick;             // ({level, shuttle, nextInMs}) => void
     this.onLevelChange = onLevelChange; // (level) => void
     this.onComplete = onComplete;     // () => void
-    this.levels = levels || BLEEP_LEVELS; // allow custom distance tables
+    this.onDiag = onDiag;             // (msg) => void  — for on-screen debugging
+    this.levels = levels || BLEEP_LEVELS;
     this.ctx = null;
     this.running = false;
     this.level = 1;
@@ -19,8 +20,21 @@ export class BleepEngine {
     this.tickHandle = null;
   }
 
+  diag(msg) {
+    if (this.onDiag) this.onDiag(msg);
+  }
+
   start() {
     if (this.running) return;
+
+    // Diagnostic: what does the device report about speech synthesis?
+    if (typeof speechSynthesis === 'undefined') {
+      this.diag('❌ speechSynthesis API is NOT available');
+    } else {
+      const voices = speechSynthesis.getVoices();
+      this.diag(`✓ speechSynthesis available, ${voices.length} voices${voices.length ? ` (e.g. "${voices[0].name}" ${voices[0].lang})` : ''}`);
+      this.diag(`State: speaking=${speechSynthesis.speaking}, paused=${speechSynthesis.paused}, pending=${speechSynthesis.pending}`);
+    }
 
     // iOS quirk: speech synthesis must be triggered synchronously inside the user
     // gesture handler. The moment we hit any `await`, the gesture context is lost
@@ -156,14 +170,23 @@ export class BleepEngine {
   // Generic speech helper. Speaks the given text immediately.
   // Silently no-ops if speech synthesis isn't supported.
   speak(text) {
-    if (typeof speechSynthesis === 'undefined') return;
+    if (typeof speechSynthesis === 'undefined') {
+      this.diag(`speak("${text}") → API missing`);
+      return;
+    }
     try {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.0;
       u.pitch = 1.0;
       u.volume = 1.0;
+      u.onstart = () => this.diag(`▶ "${text}" started`);
+      u.onend = () => this.diag(`✓ "${text}" ended`);
+      u.onerror = (e) => this.diag(`❌ "${text}" error: ${e.error || 'unknown'}`);
       speechSynthesis.speak(u);
-    } catch {}
+      this.diag(`speak("${text}") → queued`);
+    } catch (e) {
+      this.diag(`speak("${text}") → exception: ${e.message}`);
+    }
   }
 
   announceLevel(level) {
