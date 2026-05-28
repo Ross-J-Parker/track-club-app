@@ -19,22 +19,31 @@ export class BleepEngine {
     this.tickHandle = null;
   }
 
-  async start() {
+  start() {
     if (this.running) return;
+
+    // iOS quirk: speech synthesis must be triggered synchronously inside the user
+    // gesture handler. The moment we hit any `await`, the gesture context is lost
+    // and iOS silently blocks speech. So we speak "Three" BEFORE any audio setup,
+    // and we don't await the audio context resume (it'll resolve in the background;
+    // the first beep is 3 seconds away regardless).
+    if (typeof speechSynthesis !== 'undefined') {
+      try { speechSynthesis.cancel(); } catch {}
+    }
+    this.speak('Three');
+
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    // Some browsers (iOS Safari especially) require a user gesture to resume audio
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    // Fire-and-forget resume — don't await, to preserve the user gesture context for speech.
+    if (this.ctx.state === 'suspended') {
+      try { this.ctx.resume(); } catch {}
+    }
 
     this.running = true;
     this.level = 1;
     this.shuttle = 0;
 
-    // Spoken "3, 2, 1, Go" countdown before shuttle 1.
-    // The FIRST utterance must fire synchronously inside the user-gesture handler
-    // (i.e. without setTimeout) or iOS Safari/WebKit will block all subsequent speech.
-    // Speaking "Three" immediately unlocks the speech engine; the rest is scheduled.
+    // "Three" already spoken above; schedule the rest.
     const stepMs = 1000;
-    this.speak('Three');
     setTimeout(() => { if (this.running) this.speak('Two'); }, stepMs);
     setTimeout(() => { if (this.running) this.speak('One'); }, stepMs * 2);
 
