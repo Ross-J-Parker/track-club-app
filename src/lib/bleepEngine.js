@@ -29,12 +29,24 @@ export class BleepEngine {
     this.level = 1;
     this.shuttle = 0;
 
-    // 5-second prep countdown before the first beep
-    const prepMs = 5000;
+    // Spoken "3, 2, 1, Go" countdown before shuttle 1.
+    // Each number is roughly 1 second apart. "Go" coincides with the first beep so
+    // athletes know exactly when shuttle 1 begins.
+    const stepMs = 1000;
+    const countdown = ['3', '2', '1'];
+    countdown.forEach((n, i) => {
+      setTimeout(() => {
+        if (this.running) this.speak(n);
+      }, i * stepMs);
+    });
+
+    // First beep + "Go" land together at the end of the countdown
+    const prepMs = countdown.length * stepMs;
     this.nextBeepAt = performance.now() + prepMs;
-    this.playStartTone();
-    // Announce starting level a moment after the start tone
-    this.announceLevel(1);
+    setTimeout(() => {
+      if (this.running) this.speak('Go');
+    }, prepMs);
+
     this.scheduleNextBeep();
     this.startTicker();
   }
@@ -134,6 +146,19 @@ export class BleepEngine {
     this.announceLevel(this.level);
   }
 
+  // Generic speech helper. Speaks the given text immediately.
+  // Silently no-ops if speech synthesis isn't supported.
+  speak(text) {
+    if (typeof speechSynthesis === 'undefined') return;
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+      speechSynthesis.speak(u);
+    } catch {}
+  }
+
   announceLevel(level) {
     if (typeof speechSynthesis === 'undefined') return;
     try {
@@ -150,10 +175,5 @@ export class BleepEngine {
     } catch {
       // If speech synthesis isn't available, we silently degrade — beeps still play
     }
-  }
-
-  playStartTone() {
-    // Lower pitch start tone
-    this.playTone(600, 200);
   }
 }
