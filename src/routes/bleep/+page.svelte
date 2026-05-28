@@ -3,7 +3,7 @@
   import { storage } from '$lib/storage.js';
   import { GROUPS, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
-  import { BLEEP_LEVELS } from '$lib/bleep.js';
+  import { buildLevels, BLEEP_VARIANTS } from '$lib/bleep.js';
   import { BleepEngine } from '$lib/bleepEngine.js';
   import AthletePicker from '$lib/components/AthletePicker.svelte';
   import Stepper from '$lib/components/Stepper.svelte';
@@ -13,27 +13,30 @@
 
   // Phase: setup | teams | live | results
   let phase = $state('setup');
-  // Setup sub-step: mode | group | athletes
-  let setupStep = $state('mode');
+  // Setup sub-step: variant | mode | athletes
+  let setupStep = $state('variant');
 
+  let variant = $state('Bleep test (20m)'); // key into BLEEP_VARIANTS
   let mode = $state('individual'); // 'individual' | 'team'
   let group = $state('');           // optional — bleep test isn't tied to a group, but we capture it if set
   let date = $state(todayISO());
   let selectedIds = $state(new Set());
 
+  const variantConfig = $derived(BLEEP_VARIANTS[variant]);
+
   const wizardSteps = $derived([
+    { key: 'variant', label: 'Test' },
     { key: 'mode', label: 'Mode' },
-    { key: 'group', label: 'Group' },
     { key: 'athletes', label: mode === 'team' ? 'Teams' : 'Athletes' }
   ]);
 
   function nextStep() {
-    if (setupStep === 'mode') setupStep = 'group';
-    else if (setupStep === 'group') setupStep = 'athletes';
+    if (setupStep === 'variant') setupStep = 'mode';
+    else if (setupStep === 'mode') setupStep = 'athletes';
   }
   function prevStep() {
-    if (setupStep === 'athletes') setupStep = 'group';
-    else if (setupStep === 'group') setupStep = 'mode';
+    if (setupStep === 'athletes') setupStep = 'mode';
+    else if (setupStep === 'mode') setupStep = 'variant';
   }
 
   // Team setup state
@@ -92,14 +95,21 @@
   function closeTeamPicker() { teamPickerFor = null; }
 
   function assignToTeam(teamIdx, athleteId) {
-    teams.forEach(t => t.athleteIds.delete(athleteId));
-    teams[teamIdx].athleteIds.add(athleteId);
-    teams = [...teams];
+    teams = teams.map((t, i) => {
+      const ids = new Set(t.athleteIds);
+      ids.delete(athleteId);               // remove from any team
+      if (i === teamIdx) ids.add(athleteId); // add to the chosen one
+      return { ...t, athleteIds: ids };
+    });
     teamPickerFor = null;
   }
   function removeFromTeam(teamIdx, athleteId) {
-    teams[teamIdx].athleteIds.delete(athleteId);
-    teams = [...teams];
+    teams = teams.map((t, i) => {
+      if (i !== teamIdx) return t;
+      const ids = new Set(t.athleteIds);
+      ids.delete(athleteId);
+      return { ...t, athleteIds: ids };
+    });
   }
   function randomiseTeams() {
     const pool = selectedAthletes.filter(a => !teams.some(t => t.athleteIds.has(a.id)));
@@ -108,15 +118,16 @@
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
+    // Build fresh Sets per team so Svelte detects the change
+    const newSets = teams.map(t => new Set(t.athleteIds));
     shuffled.forEach((a, idx) => {
-      teams[idx % teams.length].athleteIds.add(a.id);
+      newSets[idx % newSets.length].add(a.id);
     });
-    teams = [...teams];
+    teams = teams.map((t, i) => ({ ...t, athleteIds: newSets[i] }));
   }
   function clearTeams() {
     if (!confirm('Remove all athletes from teams?')) return;
-    teams.forEach(t => t.athleteIds.clear());
-    teams = [...teams];
+    teams = teams.map(t => ({ ...t, athleteIds: new Set() }));
   }
   function cancelTeams() {
     teams = [];
@@ -134,12 +145,20 @@
   }
 
   // ---------- Live ----------
+  let activeLevels = []; // the level table for the running test (set in startLive)
+
   function startLive(m) {
+    const cfg = variantConfig;
+    const eventName = cfg.event; // 'Bleep test' or 'Bleep test (5m)'
+    activeLevels = buildLevels(cfg.distanceM);
+
     if (m === 'individual') {
       race = {
-        event: 'Bleep test',
+        event: eventName,
         kind: 'fitness',
         bleepMode: 'individual',
+        variant,
+        distanceM: cfg.distanceM,
         group,
         date,
         runners: [...selectedIds].map(id => {
@@ -149,9 +168,11 @@
       };
     } else {
       race = {
-        event: 'Bleep test',
+        event: eventName,
         kind: 'fitness',
         bleepMode: 'team',
+        variant,
+        distanceM: cfg.distanceM,
         group,
         date,
         teams: teams.map(t => ({
@@ -166,6 +187,7 @@
     bleepState = { level: 1, shuttle: 0, nextInMs: 5000 };
 
     bleepEngine = new BleepEngine({
+      levels: activeLevels,
       onTick: (s) => { bleepState = s; },
       onLevelChange: () => {},
       onComplete: () => { finishLive(true); }
@@ -238,13 +260,15 @@
   }
 
   function distanceForLevel(level, shuttle) {
+    const d = race?.distanceM || 20;
     let total = 0;
-    for (let i = 0; i < level - 1; i++) total += BLEEP_LEVELS[i].shuttles * 20;
-    total += shuttle * 20;
+    for (let i = 0; i < level - 1; i++) total += activeLevels[i].shuttles * d;
+    total += shuttle * d;
     return total;
   }
 
   function saveAndShowResults() {
+    const ev = race.event; // 'Bleep test' or 'Bleep test (5m)'
     const newResults = [];
     if (race.bleepMode === 'individual') {
       race.runners.forEach(r => {
@@ -252,7 +276,7 @@
           newResults.push({
             id: uid('r'),
             athleteId: r.id, athleteName: r.name,
-            event: 'Bleep test', kind: 'fitness', group: race.group,
+            event: ev, kind: 'fitness', group: race.group,
             date: race.date, dnf: true, bleepMode: 'individual'
           });
           return;
@@ -261,7 +285,7 @@
         newResults.push({
           id: uid('r'),
           athleteId: r.id, athleteName: r.name,
-          event: 'Bleep test', kind: 'fitness', group: race.group,
+          event: ev, kind: 'fitness', group: race.group,
           date: race.date, dnf: false,
           level, shuttle, distanceM: distanceForLevel(level, shuttle),
           bleepMode: 'individual'
@@ -276,7 +300,7 @@
           newResults.push({
             id: uid('r'),
             athleteId: aid, athleteName: a.name,
-            event: 'Bleep test', kind: 'fitness', group: race.group,
+            event: ev, kind: 'fitness', group: race.group,
             date: race.date, dnf: false,
             level, shuttle, distanceM: distanceForLevel(level, shuttle),
             bleepMode: 'team',
@@ -307,11 +331,11 @@
     selectedIds = new Set();
     teams = [];
     phase = 'setup';
-    setupStep = 'mode';
+    setupStep = 'variant';
   }
 
   // Total shuttles for current level (for progress bar)
-  const totalShuttles = $derived(BLEEP_LEVELS[bleepState.level - 1]?.shuttles || 0);
+  const totalShuttles = $derived((activeLevels[bleepState.level - 1]?.shuttles) || 0);
 
   // Sort and group results
   const sortedResults = $derived.by(() => {
@@ -365,7 +389,18 @@
 {#if phase === 'setup'}
   <Stepper steps={wizardSteps} current={setupStep} />
 
-  {#if setupStep === 'mode'}
+  {#if setupStep === 'variant'}
+    <h2 class="step-heading">Which test?</h2>
+    <p class="muted small step-sub">The 5m hills variant uses the same levels but shorter shuttles for hill or short-space sessions.</p>
+    <div class="mode-toggle">
+      <button type="button" class:active={variant === 'Bleep test (20m)'} onclick={() => variant = 'Bleep test (20m)'}>20m standard</button>
+      <button type="button" class:active={variant === 'Bleep test (5m hills)'} onclick={() => variant = 'Bleep test (5m hills)'}>5m hills</button>
+    </div>
+    <div class="step-nav">
+      <button class="primary big" onclick={nextStep}>Next</button>
+    </div>
+
+  {:else if setupStep === 'mode'}
     <h2 class="step-heading">How are athletes running this?</h2>
     <p class="muted small step-sub">Individual: each athlete runs and drops out alone. Team relay: teams share a position, take turns each shuttle.</p>
     <div class="mode-toggle">
@@ -380,21 +415,12 @@
         </select>
       </div>
     {/if}
-    <div class="step-nav">
-      <button class="primary big" onclick={nextStep}>Next</button>
-    </div>
-
-  {:else if setupStep === 'group'}
-    <h2 class="step-heading">Is this for a particular group?</h2>
-    <p class="muted small step-sub">Optional — the bleep test isn't always group-specific.</p>
-    <label class="field" for="b-group">Group</label>
-    <select id="b-group" bind:value={group}>
-      <option value="">— Not group-specific —</option>
-      {#each GROUPS as g}<option value={g}>{g}</option>{/each}
-    </select>
     <div style="margin-top: 14px;">
-      <label class="field" for="b-date">Session date</label>
-      <input id="b-date" type="date" bind:value={date} />
+      <label class="field" for="b-group">Group (optional)</label>
+      <select id="b-group" bind:value={group}>
+        <option value="">— Not group-specific —</option>
+        {#each GROUPS as g}<option value={g}>{g}</option>{/each}
+      </select>
     </div>
     <div class="step-nav">
       <button onclick={prevStep}>Back</button>
@@ -414,7 +440,7 @@
       </div>
     {:else}
       <h2 class="step-heading">Who's taking part?</h2>
-      <p class="muted small step-sub">Bleep test · {group || 'No group'} · {date}</p>
+      <p class="muted small step-sub">{variant}{group ? ' · ' + group : ''}</p>
       <AthletePicker {athletes} bind:selected={selectedIds} />
       <div class="step-nav">
         <button onclick={prevStep}>Back</button>
@@ -549,9 +575,10 @@
   {:else}
     <div class="runner-grid">
       {#each race.teams as t (t.id)}
+        {@const firstNames = t.memberIds.map(id => (athletes.find(a => a.id === id)?.name || '').split(' ')[0]).filter(Boolean)}
         <button type="button" class="runner-tile" class:finished={t.droppedAt} onclick={() => tapTeam(t)}>
           <div class="runner-name">{t.name}</div>
-          <div class="muted small">{t.memberIds.length} athlete{t.memberIds.length === 1 ? '' : 's'}</div>
+          <div class="muted small team-members-list">{firstNames.join(', ')}</div>
           <div class="runner-state mono" style="margin-top: 4px;">
             {#if t.droppedAt}L{t.droppedAt.level}.{t.droppedAt.shuttle}
             {:else}Running
@@ -726,6 +753,7 @@
   .runner-tile.finished { background: var(--success-soft); border-color: var(--success); }
   .runner-tile.dnf { background: var(--warning-soft); border-color: var(--warning); opacity: 0.7; }
   .runner-name { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .team-members-list { line-height: 1.4; margin-bottom: 2px; }
   .runner-state { font-size: 13px; color: var(--text-2); }
 
   /* Results */

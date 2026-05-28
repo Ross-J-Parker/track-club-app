@@ -6,10 +6,11 @@
 import { BLEEP_LEVELS } from './bleep.js';
 
 export class BleepEngine {
-  constructor({ onTick, onLevelChange, onComplete }) {
+  constructor({ onTick, onLevelChange, onComplete, levels }) {
     this.onTick = onTick;             // ({level, shuttle, nextInMs}) => void
     this.onLevelChange = onLevelChange; // (level) => void
     this.onComplete = onComplete;     // () => void
+    this.levels = levels || BLEEP_LEVELS; // allow custom distance tables
     this.ctx = null;
     this.running = false;
     this.level = 1;
@@ -60,14 +61,14 @@ export class BleepEngine {
       if (!this.running) return;
       this.shuttle += 1;
 
-      const levelData = BLEEP_LEVELS[this.level - 1];
+      const levelData = this.levels[this.level - 1];
 
       // Check if this beep finishes the current level
       if (this.shuttle > levelData.shuttles) {
         // Advance to next level
         this.level += 1;
         this.shuttle = 1;
-        if (this.level > BLEEP_LEVELS.length) {
+        if (this.level > this.levels.length) {
           // Test complete (everyone who got here gets max score)
           this.playLevelChangeTone();
           this.running = false;
@@ -81,7 +82,7 @@ export class BleepEngine {
       }
 
       // Schedule the next beep using the new level's interval
-      const interval = BLEEP_LEVELS[this.level - 1].intervalMs;
+      const interval = this.levels[this.level - 1].intervalMs;
       this.nextBeepAt += interval;
       this.scheduleNextBeep();
     }, delay);

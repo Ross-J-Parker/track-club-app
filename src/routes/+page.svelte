@@ -302,10 +302,6 @@
     <select id="group-sel" bind:value={group}>
       {#each GROUPS as g}<option value={g}>{g}</option>{/each}
     </select>
-    <div style="margin-top: 14px;">
-      <label class="field" for="date-sel">Session date</label>
-      <input id="date-sel" type="date" bind:value={date} />
-    </div>
     <div class="step-nav">
       <button onclick={prevStep}>Back</button>
       <button class="primary big" onclick={nextStep}>Next</button>
@@ -313,7 +309,7 @@
 
   {:else if setupStep === 'athletes'}
     <h2 class="step-heading">Who's taking part?</h2>
-    <p class="muted small step-sub">{eventName} · {group} · {date}</p>
+    <p class="muted small step-sub">{eventName} · {group}</p>
     <AthletePicker {athletes} bind:selected={selectedIds} />
     <div class="step-nav">
       <button onclick={prevStep}>Back</button>

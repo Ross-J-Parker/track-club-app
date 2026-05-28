@@ -1,19 +1,18 @@
-// Standard 20m Multi-Stage Fitness Test (MSFT / bleep test) level data.
-// Each level has a starting speed (km/h), a number of shuttles to complete,
-// and a shuttle interval in milliseconds (calculated from speed: 20m / speed).
+// Multi-Stage Fitness Test (bleep test) level data.
+// Each level has a starting speed (km/h) and a number of shuttles.
+// The shuttle interval depends on BOTH the speed and the shuttle distance:
+//   - Standard test: 20m shuttles
+//   - Hill / short variant: 5m shuttles (faster turnover, same speeds)
 //
-// Speeds: level 1 = 8.5 km/h, increasing by 0.5 km/h each level.
-// Shuttle count grows roughly linearly with level.
-//
-// Source: standard published intervals used across PE, sports clubs and military.
+// Source: standard published 20m MSFT intervals used across PE, sports clubs and military.
 
-function intervalMs(kmh) {
-  // time = distance / speed; 20m at kmh km/h = (20 / 1000) / (kmh / 3600) seconds
-  const seconds = (20 / 1000) / (kmh / 3600);
+function intervalMs(kmh, distanceM) {
+  // time = distance / speed; distanceM at kmh km/h
+  const seconds = (distanceM / 1000) / (kmh / 3600);
   return Math.round(seconds * 1000);
 }
 
-export const BLEEP_LEVELS = [
+const LEVEL_SPEC = [
   { level: 1,  speed: 8.5,  shuttles: 7 },
   { level: 2,  speed: 9.0,  shuttles: 8 },
   { level: 3,  speed: 9.5,  shuttles: 8 },
@@ -35,4 +34,18 @@ export const BLEEP_LEVELS = [
   { level: 19, speed: 17.5, shuttles: 15 },
   { level: 20, speed: 18.0, shuttles: 16 },
   { level: 21, speed: 18.5, shuttles: 16 }
-].map(l => ({ ...l, intervalMs: intervalMs(l.speed) }));
+];
+
+// Build a level table for a given shuttle distance in metres.
+export function buildLevels(distanceM) {
+  return LEVEL_SPEC.map(l => ({ ...l, intervalMs: intervalMs(l.speed, distanceM) }));
+}
+
+// Default 20m table (kept for backwards compatibility with existing imports)
+export const BLEEP_LEVELS = buildLevels(20);
+
+// Supported bleep variants
+export const BLEEP_VARIANTS = {
+  'Bleep test (20m)': { distanceM: 20, event: 'Bleep test' },
+  'Bleep test (5m hills)': { distanceM: 5, event: 'Bleep test (5m)' }
+};

@@ -11,7 +11,8 @@ export const EVENTS = {
   'Shot put':    { kind: 'field' },
   'Javelin':     { kind: 'field' },
   'Discus':      { kind: 'field' },
-  'Bleep test':  { kind: 'fitness' }
+  'Bleep test':  { kind: 'fitness' },
+  'Bleep test (5m)': { kind: 'fitness' }
 };
 
 export const TRACK_EVENTS   = Object.entries(EVENTS).filter(([, v]) => v.kind === 'track').map(([k]) => k);

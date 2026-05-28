@@ -6,7 +6,6 @@
     { href: '/', label: 'Race', icon: 'stopwatch' },
     { href: '/bleep', label: 'Bleep', icon: 'bolt' },
     { href: '/athletes', label: 'Athletes', icon: 'users' },
-    { href: '/history', label: 'History', icon: 'history' },
     { href: '/achievements', label: 'Achievements', icon: 'trophy' }
   ];
 
