@@ -1,7 +1,7 @@
 <script>
   import { onDestroy } from 'svelte';
   import { storage } from '$lib/storage.js';
-  import { GROUPS, todayISO, uid } from '$lib/events.js';
+  import { todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
   import { buildLevels, BLEEP_VARIANTS } from '$lib/bleep.js';
   import { BleepEngine } from '$lib/bleepEngine.js';
@@ -150,7 +150,7 @@
   function startLive(m) {
     const cfg = variantConfig;
     const eventName = cfg.event; // 'Bleep test' or 'Bleep test (5m)'
-    activeLevels = buildLevels(cfg.distanceM);
+    activeLevels = buildLevels(cfg.distanceM, cfg.slowdown || 0);
 
     if (m === 'individual') {
       race = {
@@ -415,13 +415,6 @@
         </select>
       </div>
     {/if}
-    <div style="margin-top: 14px;">
-      <label class="field" for="b-group">Group (optional)</label>
-      <select id="b-group" bind:value={group}>
-        <option value="">— Not group-specific —</option>
-        {#each GROUPS as g}<option value={g}>{g}</option>{/each}
-      </select>
-    </div>
     <div class="step-nav">
       <button onclick={prevStep}>Back</button>
       <button class="primary big" onclick={nextStep}>Next</button>

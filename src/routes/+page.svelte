@@ -1,7 +1,7 @@
 <script>
   import { onDestroy } from 'svelte';
   import { storage } from '$lib/storage.js';
-  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, GROUPS, fmtTime, todayISO, uid } from '$lib/events.js';
+  import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, groupsForEvent, lapLabel, fmtTime, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
   import AthletePicker from '$lib/components/AthletePicker.svelte';
   import Stepper from '$lib/components/Stepper.svelte';
@@ -29,6 +29,17 @@
   let date = $state(todayISO());
   let eventName = $state('100m');
   let selectedIds = $state(new Set());
+
+  // Groups valid for the currently-chosen event (track vs field).
+  const validGroups = $derived(groupsForEvent(eventName));
+  // If the selected group isn't valid for the chosen event, snap to the first valid one.
+  $effect(() => {
+    if (!validGroups.includes(group)) {
+      group = validGroups[0];
+    }
+  });
+
+  const currentLapLabel = $derived(lapLabel(eventName));
 
   const wizardSteps = [
     { key: 'event', label: 'Event' },
@@ -87,6 +98,7 @@
       event: eventName,
       kind: 'track',
       laps: cfg.laps,
+      lapLabel: cfg.lapLabel,
       group, date,
       startedAt: Date.now(),
       runners: [...selectedIds].map(id => {
@@ -284,13 +296,16 @@
     <select id="event-sel" bind:value={eventName}>
       <optgroup label="Track">
         {#each TRACK_EVENTS as e}
-          <option value={e}>{e}{EVENTS[e].laps > 1 ? ` (${EVENTS[e].laps} laps)` : ''}</option>
+          <option value={e}>{e}{EVENTS[e].lapLabel ? ` · ${EVENTS[e].lapLabel}` : ''}</option>
         {/each}
       </optgroup>
       <optgroup label="Field">
         {#each FIELD_EVENTS as e}<option value={e}>{e}</option>{/each}
       </optgroup>
     </select>
+    {#if currentLapLabel}
+      <p class="muted small" style="margin-top: 8px;">{eventName} is {currentLapLabel} of a 400m track.</p>
+    {/if}
     <div class="step-nav">
       <button class="primary big" onclick={nextStep}>Next</button>
     </div>
@@ -300,7 +315,7 @@
     <p class="muted small step-sub">Records and PBs are tracked per group as well as overall.</p>
     <label class="field" for="group-sel">Group</label>
     <select id="group-sel" bind:value={group}>
-      {#each GROUPS as g}<option value={g}>{g}</option>{/each}
+      {#each validGroups as g}<option value={g}>{g}</option>{/each}
     </select>
     <div class="step-nav">
       <button onclick={prevStep}>Back</button>
@@ -324,7 +339,7 @@
 {:else if phase === 'live'}
   <div class="live-header">
     <div>
-      <div class="muted" style="font-size: 13px;">{race.event}{race.laps > 1 ? ` · ${race.laps} laps` : ''} · {race.group}</div>
+      <div class="muted" style="font-size: 13px;">{race.event}{race.lapLabel ? ` · ${race.lapLabel}` : ''} · {race.group}</div>
       <div class="mono clock">{fmtTime(now)}</div>
     </div>
     <div class="live-actions">

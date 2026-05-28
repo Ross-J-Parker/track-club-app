@@ -1,11 +1,11 @@
 export const EVENTS = {
-  '60m':         { kind: 'track', laps: 1 },
-  '100m':        { kind: 'track', laps: 1 },
-  '200m':        { kind: 'track', laps: 1 },
-  '400m':        { kind: 'track', laps: 1 },
-  '800m':        { kind: 'track', laps: 2 },
-  '1500m':       { kind: 'track', laps: 4 },
-  '3000m':       { kind: 'track', laps: 8 },
+  '60m':         { kind: 'track', laps: 1, lapLabel: null },
+  '100m':        { kind: 'track', laps: 1, lapLabel: null },
+  '200m':        { kind: 'track', laps: 1, lapLabel: '½ lap' },
+  '400m':        { kind: 'track', laps: 1, lapLabel: '1 lap' },
+  '800m':        { kind: 'track', laps: 2, lapLabel: '2 laps' },
+  '1500m':       { kind: 'track', laps: 4, lapLabel: '3¾ laps' },
+  '3000m':       { kind: 'track', laps: 8, lapLabel: '7½ laps' },
   'Long jump':   { kind: 'field' },
   'High jump':   { kind: 'field' },
   'Shot put':    { kind: 'field' },
@@ -20,6 +20,24 @@ export const FIELD_EVENTS   = Object.entries(EVENTS).filter(([, v]) => v.kind ==
 export const FITNESS_EVENTS = Object.entries(EVENTS).filter(([, v]) => v.kind === 'fitness').map(([k]) => k);
 
 export const GROUPS = ['U11', 'Sprints', 'Middle distance', 'Jumps', 'Throws'];
+
+// Which groups make sense for which event kind.
+// Track running events never use Jumps/Throws; field events never use Sprints/Middle distance.
+const GROUPS_BY_KIND = {
+  track: ['U11', 'Sprints', 'Middle distance'],
+  field: ['U11', 'Jumps', 'Throws'],
+  fitness: GROUPS // not used in UI currently, but kept complete
+};
+
+export function groupsForEvent(eventName) {
+  const kind = EVENTS[eventName]?.kind;
+  return GROUPS_BY_KIND[kind] || GROUPS;
+}
+
+// Human-friendly lap description for the setup/live screens.
+export function lapLabel(eventName) {
+  return EVENTS[eventName]?.lapLabel || null;
+}
 
 export function fmtTime(ms) {
   if (ms == null) return '—';

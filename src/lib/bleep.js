@@ -37,8 +37,13 @@ const LEVEL_SPEC = [
 ];
 
 // Build a level table for a given shuttle distance in metres.
-export function buildLevels(distanceM) {
-  return LEVEL_SPEC.map(l => ({ ...l, intervalMs: intervalMs(l.speed, distanceM) }));
+// `slowdown` adds tolerance to every interval (e.g. 0.2 = 20% more time per shuttle),
+// used for the uphill 5m variant where athletes move slower than flat-ground pace.
+export function buildLevels(distanceM, slowdown = 0) {
+  return LEVEL_SPEC.map(l => ({
+    ...l,
+    intervalMs: Math.round(intervalMs(l.speed, distanceM) * (1 + slowdown))
+  }));
 }
 
 // Default 20m table (kept for backwards compatibility with existing imports)
@@ -46,6 +51,6 @@ export const BLEEP_LEVELS = buildLevels(20);
 
 // Supported bleep variants
 export const BLEEP_VARIANTS = {
-  'Bleep test (20m)': { distanceM: 20, event: 'Bleep test' },
-  'Bleep test (5m hills)': { distanceM: 5, event: 'Bleep test (5m)' }
+  'Bleep test (20m)': { distanceM: 20, slowdown: 0, event: 'Bleep test' },
+  'Bleep test (5m hills)': { distanceM: 5, slowdown: 0.2, event: 'Bleep test (5m)' }
 };
