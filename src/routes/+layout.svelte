@@ -1,6 +1,10 @@
 <script>
   import '../app.css';
   import { page } from '$app/stores';
+  import { onMount } from 'svelte';
+  import { initAuth, session, coach, loaded, signOut } from '$lib/auth.js';
+  import AuthScreen from '$lib/components/AuthScreen.svelte';
+  import PendingApproval from '$lib/components/PendingApproval.svelte';
 
   const tabs = [
     { href: '/', label: 'Race', icon: 'stopwatch' },
@@ -16,50 +20,69 @@
   }
 
   let { children } = $props();
+
+  onMount(() => { initAuth(); });
 </script>
 
-<div class="shell">
-  <header>
-    <a href="/" class="brand" aria-label="Track Club — go to home">
-      <svg width="32" height="22" viewBox="0 0 60 40" aria-hidden="true">
-        <!-- Outer track edge -->
-        <rect x="2" y="2" width="56" height="36" rx="18" ry="18" fill="none" stroke="currentColor" stroke-width="2.5" />
-        <!-- Inner lanes -->
-        <rect x="9" y="9" width="42" height="22" rx="11" ry="11" fill="none" stroke="currentColor" stroke-width="1" opacity="0.5" />
-        <rect x="15" y="15" width="30" height="10" rx="5" ry="5" fill="none" stroke="currentColor" stroke-width="1" opacity="0.4" />
-        <!-- Start line marker -->
-        <line x1="30" y1="2" x2="30" y2="9" stroke="currentColor" stroke-width="2" />
-      </svg>
-      <span>Track Club</span>
-    </a>
-  </header>
-
-  <nav>
-    {#each tabs as tab}
-      {@const active = isActive(tab.href, $page.url.pathname)}
-      <a href={tab.href} class:active title={tab.label} aria-label={tab.label}>
-        {#if tab.icon === 'stopwatch'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="14" r="8"/><path d="M5 2h4"/><path d="M9 6V2"/><path d="M15 2h-4"/><path d="m20 4-2 2"/><path d="M12 14v-4"/></svg>
-        {:else if tab.icon === 'users'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        {:else if tab.icon === 'history'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
-        {:else if tab.icon === 'trophy'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
-        {:else if tab.icon === 'bolt'}
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        {/if}
-        <span class="tab-label">{tab.label}</span>
+{#if !$loaded}
+  <!-- Initial auth check in flight — keep this brief and unbranded -->
+  <div class="boot-screen"><span class="muted small">Loading…</span></div>
+{:else if !$session}
+  <AuthScreen />
+{:else if !$coach?.approved}
+  <PendingApproval />
+{:else}
+  <div class="shell">
+    <header>
+      <a href="/" class="brand" aria-label="Track Club — go to home">
+        <svg width="32" height="22" viewBox="0 0 60 40" aria-hidden="true">
+          <rect x="2" y="2" width="56" height="36" rx="18" ry="18" fill="none" stroke="currentColor" stroke-width="2.5" />
+          <rect x="9" y="9" width="42" height="22" rx="11" ry="11" fill="none" stroke="currentColor" stroke-width="1" opacity="0.5" />
+          <rect x="15" y="15" width="30" height="10" rx="5" ry="5" fill="none" stroke="currentColor" stroke-width="1" opacity="0.4" />
+          <line x1="30" y1="2" x2="30" y2="9" stroke="currentColor" stroke-width="2" />
+        </svg>
+        <span>Track Club</span>
       </a>
-    {/each}
-  </nav>
+      <button type="button" class="signout-btn" onclick={signOut} aria-label="Sign out" title={$coach?.email}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+      </button>
+    </header>
 
-  <main>
-    {@render children?.()}
-  </main>
-</div>
+    <nav>
+      {#each tabs as tab}
+        {@const active = isActive(tab.href, $page.url.pathname)}
+        <a href={tab.href} class:active title={tab.label} aria-label={tab.label}>
+          {#if tab.icon === 'stopwatch'}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="14" r="8"/><path d="M5 2h4"/><path d="M9 6V2"/><path d="M15 2h-4"/><path d="m20 4-2 2"/><path d="M12 14v-4"/></svg>
+          {:else if tab.icon === 'users'}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          {:else if tab.icon === 'history'}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          {:else if tab.icon === 'trophy'}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+          {:else if tab.icon === 'bolt'}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          {/if}
+          <span class="tab-label">{tab.label}</span>
+        </a>
+      {/each}
+    </nav>
+
+    <main>
+      {@render children?.()}
+    </main>
+  </div>
+{/if}
 
 <style>
+  .boot-screen {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .small { font-size: 13px; }
   .shell {
     max-width: 880px;
     margin: 0 auto;
@@ -86,6 +109,15 @@
   }
   .brand svg { color: var(--accent); }
   .brand:hover { color: var(--text); background: var(--surface-2); }
+  .signout-btn {
+    margin-left: auto;
+    padding: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    min-height: 0;
+  }
+  .signout-btn:hover { color: var(--text); background: var(--surface-2); }
   nav {
     display: flex;
     gap: 2px;
