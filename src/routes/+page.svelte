@@ -1,12 +1,26 @@
 <script>
   import { onDestroy } from 'svelte';
   import { storage } from '$lib/storage.js';
+  import { supabase } from '$lib/supabase.js';
   import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, groupsForEvent, lapLabel, fmtTime, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
   import AthletePicker from '$lib/components/AthletePicker.svelte';
   import Stepper from '$lib/components/Stepper.svelte';
 
   let { data } = $props();
+
+  // ----- TEMPORARY: Supabase connection test -----
+  // Proves the Supabase client is wired up correctly by fetching the Phoenix Flyers
+  // club row. Remove this whole block once login + real data flow is in place.
+  let dbTestStatus = $state('checking…');
+  $effect(() => {
+    supabase.from('clubs').select('name').limit(1).then(({ data, error }) => {
+      if (error) dbTestStatus = `error: ${error.message}`;
+      else if (!data || data.length === 0) dbTestStatus = 'connected, but no clubs found';
+      else dbTestStatus = `connected ✓ — found "${data[0].name}"`;
+    });
+  });
+  // ----- END TEMPORARY -----
 
   // Seed athletes if empty (first run)
   let athletes = $state(data.athletes.length > 0 ? data.athletes : [
@@ -286,6 +300,11 @@
   }
 </script>
 
+<!-- TEMPORARY Supabase connection status banner. Remove after auth is wired up. -->
+<div class="db-test-banner">
+  <span class="muted small">DB: {dbTestStatus}</span>
+</div>
+
 {#if phase === 'setup'}
   <Stepper steps={wizardSteps} current={setupStep} />
 
@@ -486,6 +505,14 @@
 {/if}
 
 <style>
+  .db-test-banner {
+    padding: 6px 10px;
+    margin-bottom: 12px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    text-align: center;
+  }
+  .db-test-banner .small { font-size: 11px; }
   /* Wizard layout */
   .step-heading { font-size: 20px; margin: 0 0 4px; }
   .step-sub { margin: 0 0 18px; }
