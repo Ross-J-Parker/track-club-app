@@ -1,6 +1,5 @@
 <script>
   import { storage } from '$lib/storage.js';
-  import { uid } from '$lib/events.js';
 
   let { data } = $props();
 
@@ -11,12 +10,11 @@
   let menuOpenFor = $state(null);
   let editingId = $state(null);
   let editingName = $state('');
+  let working = $state(false); // true while a database call is in flight
 
   // CSV upload state
   let fileInput;
   let csvPreview = $state(null); // { fresh: [], duplicates: [] }
-
-  function persist() { storage.setAthletes(athletes); }
 
   function handleFileChosen(e) {
     const file = e.target.files?.[0];
@@ -31,21 +29,15 @@
       }
     };
     reader.readAsText(file);
-    // Reset the input so picking the same file again triggers onchange
-    e.target.value = '';
+    e.target.value = ''; // allow picking the same file again
   }
 
   function parseCSVPreview(text) {
-    // Lenient parser: split on newlines, then on first comma per line.
-    // Take the first column as the name. Strip surrounding quotes/whitespace.
-    // Skip blank rows. Detect and skip a header row ("name", "athlete name", etc.).
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const names = [];
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const firstField = line.split(',')[0].trim().replace(/^["']|["']$/g, '');
+      const firstField = lines[i].split(',')[0].trim().replace(/^["']|["']$/g, '');
       if (!firstField) continue;
-      // Skip a likely header on the first line
       if (i === 0 && /^(name|athlete|first ?name|full ?name)$/i.test(firstField)) continue;
       names.push(firstField);
     }
@@ -73,49 +65,77 @@
     csvPreview = { fresh, duplicates };
   }
 
-  function commitCSVImport() {
-    if (!csvPreview) return;
-    const added = csvPreview.fresh.map(name => ({ id: uid('a'), name }));
-    athletes = [...athletes, ...added];
-    persist();
-    const count = added.length;
-    csvPreview = null;
-    showToast(`Imported ${count} athlete${count === 1 ? '' : 's'}`, () => {
-      const ids = new Set(added.map(a => a.id));
-      athletes = athletes.filter(a => !ids.has(a.id));
-      persist();
-    });
+  async function commitCSVImport() {
+    if (!csvPreview || working) return;
+    working = true;
+    try {
+      const added = await storage.addAthletes(csvPreview.fresh);
+      if (added.length === 0) {
+        alert('Import failed — see browser console for details.');
+        return;
+      }
+      athletes = [...athletes, ...added].sort((a, b) => a.name.localeCompare(b.name));
+      const count = added.length;
+      csvPreview = null;
+      showToast(`Imported ${count} athlete${count === 1 ? '' : 's'}`, async () => {
+        // Undo: delete the rows we just inserted
+        for (const a of added) await storage.deleteAthlete(a.id);
+        athletes = athletes.filter(x => !added.some(a => a.id === x.id));
+      });
+    } finally {
+      working = false;
+    }
   }
 
   function cancelCSVImport() { csvPreview = null; }
 
-  function addAthletes() {
+  async function addAthletes() {
     const names = inputValue.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    if (names.length === 0) return;
-    const added = names.map(name => ({ id: uid('a'), name }));
-    athletes = [...athletes, ...added];
-    persist();
-    inputValue = '';
-    showToast(
-      added.length === 1 ? `Added ${added[0].name}` : `Added ${added.length} athletes`,
-      () => {
-        const ids = new Set(added.map(a => a.id));
-        athletes = athletes.filter(a => !ids.has(a.id));
-        persist();
+    if (names.length === 0 || working) return;
+    working = true;
+    try {
+      const added = await storage.addAthletes(names);
+      if (added.length === 0) {
+        alert('Could not add athletes — see browser console for details.');
+        return;
       }
-    );
+      athletes = [...athletes, ...added].sort((a, b) => a.name.localeCompare(b.name));
+      inputValue = '';
+      showToast(
+        added.length === 1 ? `Added ${added[0].name}` : `Added ${added.length} athletes`,
+        async () => {
+          for (const a of added) await storage.deleteAthlete(a.id);
+          athletes = athletes.filter(x => !added.some(a => a.id === x.id));
+        }
+      );
+    } finally {
+      working = false;
+    }
   }
 
-  function deleteAthlete(a) {
+  async function deleteAthlete(a) {
     menuOpenFor = null;
-    const idx = athletes.indexOf(a);
-    athletes = athletes.filter(x => x.id !== a.id);
-    persist();
-    showToast(`Removed ${a.name}`, () => {
-      athletes.splice(idx, 0, a);
-      athletes = [...athletes];
-      persist();
-    });
+    if (working) return;
+    working = true;
+    try {
+      const ok = await storage.deleteAthlete(a.id);
+      if (!ok) {
+        alert('Could not delete — see browser console for details.');
+        return;
+      }
+      athletes = athletes.filter(x => x.id !== a.id);
+      showToast(`Removed ${a.name}`, async () => {
+        // Undo: re-insert. Note: the new row will have a NEW UUID, which means any
+        // results that referenced the old ID will become orphaned. Not a problem yet
+        // because results still live in localStorage and this is a rare action.
+        const restored = await storage.addAthlete(a.name);
+        if (restored) {
+          athletes = [...athletes, restored].sort((x, y) => x.name.localeCompare(y.name));
+        }
+      });
+    } finally {
+      working = false;
+    }
   }
 
   function startEdit(a) {
@@ -124,13 +144,25 @@
     editingName = a.name;
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     const trimmed = editingName.trim();
     if (!trimmed) { cancelEdit(); return; }
-    athletes = athletes.map(a => a.id === editingId ? { ...a, name: trimmed } : a);
-    persist();
-    editingId = null;
-    editingName = '';
+    if (working) return;
+    working = true;
+    try {
+      const ok = await storage.updateAthlete(editingId, { name: trimmed });
+      if (!ok) {
+        alert('Could not save — see browser console for details.');
+        return;
+      }
+      athletes = athletes
+        .map(a => a.id === editingId ? { ...a, name: trimmed } : a)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      editingId = null;
+      editingName = '';
+    } finally {
+      working = false;
+    }
   }
 
   function cancelEdit() {

@@ -9,16 +9,7 @@
   let { data } = $props();
 
   // Seed athletes if empty (first run)
-  let athletes = $state(data.athletes.length > 0 ? data.athletes : [
-    { id: 'a1', name: 'Amelia Chen' },
-    { id: 'a2', name: 'Ben Okafor' },
-    { id: 'a3', name: 'Chloe Davies' },
-    { id: 'a4', name: 'Daniyal Khan' },
-    { id: 'a5', name: 'Esme Tate' }
-  ]);
-  if (data.athletes.length === 0) {
-    storage.setAthletes(athletes);
-  }
+  let athletes = $state(data.athletes);
 
   // Phase: setup | live | field | results
   let phase = $state('setup');

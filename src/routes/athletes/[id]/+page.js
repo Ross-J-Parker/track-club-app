@@ -4,8 +4,8 @@ import { error } from '@sveltejs/kit';
 export const ssr = false;
 export const prerender = false;
 
-export function load({ params }) {
-  const athletes = storage.getAthletes();
+export async function load({ params }) {
+  const athletes = await storage.getAthletes();
   const athlete = athletes.find(a => a.id === params.id);
   if (!athlete) throw error(404, 'Athlete not found');
   return {
