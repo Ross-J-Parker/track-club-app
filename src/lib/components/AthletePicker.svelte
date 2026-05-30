@@ -1,38 +1,43 @@
 <script>
   /**
    * Props:
-   *   athletes  — array of { id, name }
+   *   athletes  — array of { id, first_name, last_name }
    *   selected  — Set<string> of selected athlete IDs (two-way bound via $bindable)
-   *
-   * The component manages its own internal search and sort state.
-   * Parent reads `selected` to know who was picked.
    */
+  import { displayName, sortName } from '$lib/storage.js';
+
   let { athletes, selected = $bindable() } = $props();
 
   let search = $state('');
   let sortBy = $state('first'); // 'first' | 'last'
 
+  function matches(a, term) {
+    if (!term) return true;
+    return displayName(a).toLowerCase().includes(term);
+  }
+
   const filtered = $derived.by(() => {
     const term = search.trim().toLowerCase();
-    let list = athletes;
-    if (term) {
-      list = list.filter(a => a.name.toLowerCase().includes(term));
-    }
+    let list = athletes.filter(a => matches(a, term));
     if (sortBy === 'first') {
-      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+      list = [...list].sort((a, b) => {
+        const af = (a.first_name || '').toLowerCase();
+        const bf = (b.first_name || '').toLowerCase();
+        return af.localeCompare(bf) || (a.last_name || '').localeCompare(b.last_name || '');
+      });
     } else {
       list = [...list].sort((a, b) => {
-        const la = lastName(a.name).toLowerCase();
-        const lb = lastName(b.name).toLowerCase();
-        return la.localeCompare(lb) || a.name.localeCompare(b.name);
+        const al = (a.last_name || '').toLowerCase();
+        const bl = (b.last_name || '').toLowerCase();
+        return al.localeCompare(bl) || (a.first_name || '').localeCompare(b.first_name || '');
       });
     }
     return list;
   });
 
-  function lastName(full) {
-    const parts = full.trim().split(/\s+/);
-    return parts.length > 1 ? parts[parts.length - 1] : full;
+  // When sorting by last name, render "Chen, Amelia" so the visual matches the sort.
+  function renderName(a) {
+    return sortBy === 'last' ? sortName(a) : displayName(a);
   }
 
   function toggle(id) {
@@ -41,18 +46,14 @@
     selected = new Set(selected);
   }
 
-  // Select all / none operate on the currently visible (filtered) list,
-  // not on the entire roster — this is the convention almost every list app uses.
   function selectAllVisible() {
     for (const a of filtered) selected.add(a.id);
     selected = new Set(selected);
   }
-
   function clearVisible() {
     for (const a of filtered) selected.delete(a.id);
     selected = new Set(selected);
   }
-
   function clearAll() {
     selected = new Set();
   }
@@ -63,11 +64,7 @@
 
 <div class="picker">
   <div class="toolbar">
-    <input
-      type="search"
-      placeholder="Search athletes…"
-      bind:value={search}
-    />
+    <input type="search" placeholder="Search athletes…" bind:value={search} />
     <select bind:value={sortBy} aria-label="Sort by">
       <option value="first">First name</option>
       <option value="last">Last name</option>
@@ -101,20 +98,13 @@
     <div class="list" role="listbox" aria-multiselectable="true">
       {#each filtered as a (a.id)}
         {@const isSel = selected.has(a.id)}
-        <button
-          type="button"
-          class="athlete-row"
-          class:selected={isSel}
-          role="option"
-          aria-selected={isSel}
-          onclick={() => toggle(a.id)}
-        >
+        <button type="button" class="athlete-row" class:selected={isSel} role="option" aria-selected={isSel} onclick={() => toggle(a.id)}>
           <span class="checkbox" aria-hidden="true">
             {#if isSel}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             {/if}
           </span>
-          <span class="name">{a.name}</span>
+          <span class="name">{renderName(a)}</span>
         </button>
       {/each}
     </div>

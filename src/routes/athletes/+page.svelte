@@ -1,20 +1,30 @@
 <script>
-  import { storage } from '$lib/storage.js';
+  import { storage, displayName, splitFullName } from '$lib/storage.js';
 
   let { data } = $props();
 
   let athletes = $state(data.athletes);
-  let inputValue = $state('');
+  let firstInput = $state('');
+  let lastInput = $state('');
   let toast = $state(null);
   let toastTimer = null;
   let menuOpenFor = $state(null);
   let editingId = $state(null);
-  let editingName = $state('');
-  let working = $state(false); // true while a database call is in flight
+  let editingFirst = $state('');
+  let editingLast = $state('');
+  let working = $state(false);
 
   // CSV upload state
   let fileInput;
-  let csvPreview = $state(null); // { fresh: [], duplicates: [] }
+  let csvPreview = $state(null); // { fresh: [{first_name, last_name}], duplicates: ["full name"] }
+
+  function sortAthletes(list) {
+    return [...list].sort((a, b) => {
+      const af = (a.first_name || '').toLowerCase();
+      const bf = (b.first_name || '').toLowerCase();
+      return af.localeCompare(bf) || (a.last_name || '').localeCompare(b.last_name || '');
+    });
+  }
 
   function handleFileChosen(e) {
     const file = e.target.files?.[0];
@@ -22,42 +32,64 @@
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const text = reader.result;
-        parseCSVPreview(text);
-      } catch (err) {
+        parseCSVPreview(reader.result);
+      } catch {
         alert('Could not read that file.');
       }
     };
     reader.readAsText(file);
-    e.target.value = ''; // allow picking the same file again
+    e.target.value = '';
   }
 
   function parseCSVPreview(text) {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const names = [];
-    for (let i = 0; i < lines.length; i++) {
-      const firstField = lines[i].split(',')[0].trim().replace(/^["']|["']$/g, '');
-      if (!firstField) continue;
-      if (i === 0 && /^(name|athlete|first ?name|full ?name)$/i.test(firstField)) continue;
-      names.push(firstField);
+
+    // Determine if file is one column or two by inspecting the first non-header row.
+    // Header detection: skip line 1 if it looks like "name", "first name", "last name", etc.
+    let startIdx = 0;
+    if (lines.length > 0) {
+      const headerCandidate = lines[0].toLowerCase();
+      if (/^(name|athlete|full ?name|first ?name|first ?name,\s*last ?name|first,\s*last)$/i.test(headerCandidate)) {
+        startIdx = 1;
+      }
     }
-    // De-duplicate within the file itself
+
+    const parsed = []; // [{first_name, last_name}]
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i];
+      const cells = line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+      if (cells.length >= 2 && cells[0] && cells[1]) {
+        // Two-column format
+        parsed.push({ first_name: cells[0], last_name: cells[1] });
+      } else if (cells.length >= 1 && cells[0]) {
+        // One-column — split on last whitespace
+        parsed.push(splitFullName(cells[0]));
+      }
+    }
+
+    // De-duplicate within the file (case-insensitive full-name comparison)
     const seenInFile = new Set();
     const uniq = [];
-    for (const n of names) {
-      const key = n.toLowerCase();
+    for (const p of parsed) {
+      const key = `${p.first_name}|${p.last_name}`.toLowerCase();
       if (seenInFile.has(key)) continue;
       seenInFile.add(key);
-      uniq.push(n);
+      uniq.push(p);
     }
-    // Split into fresh vs duplicates of existing athletes
-    const existingNames = new Set(athletes.map(a => a.name.toLowerCase()));
+
+    // Compare against existing athletes
+    const existing = new Set(athletes.map(a => `${a.first_name}|${a.last_name}`.toLowerCase()));
     const fresh = [];
     const duplicates = [];
-    for (const n of uniq) {
-      if (existingNames.has(n.toLowerCase())) duplicates.push(n);
-      else fresh.push(n);
+    for (const p of uniq) {
+      const key = `${p.first_name}|${p.last_name}`.toLowerCase();
+      if (existing.has(key)) {
+        duplicates.push(displayName(p));
+      } else {
+        fresh.push(p);
+      }
     }
+
     if (fresh.length === 0 && duplicates.length === 0) {
       alert('No athlete names found in that file.');
       return;
@@ -74,11 +106,10 @@
         alert('Import failed — see browser console for details.');
         return;
       }
-      athletes = [...athletes, ...added].sort((a, b) => a.name.localeCompare(b.name));
+      athletes = sortAthletes([...athletes, ...added]);
       const count = added.length;
       csvPreview = null;
       showToast(`Imported ${count} athlete${count === 1 ? '' : 's'}`, async () => {
-        // Undo: delete the rows we just inserted
         for (const a of added) await storage.deleteAthlete(a.id);
         athletes = athletes.filter(x => !added.some(a => a.id === x.id));
       });
@@ -89,25 +120,24 @@
 
   function cancelCSVImport() { csvPreview = null; }
 
-  async function addAthletes() {
-    const names = inputValue.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    if (names.length === 0 || working) return;
+  async function addOne() {
+    const first = firstInput.trim();
+    const last = lastInput.trim();
+    if (!first || working) return;
     working = true;
     try {
-      const added = await storage.addAthletes(names);
-      if (added.length === 0) {
-        alert('Could not add athletes — see browser console for details.');
+      const added = await storage.addAthlete(first, last);
+      if (!added) {
+        alert('Could not add athlete — see browser console for details.');
         return;
       }
-      athletes = [...athletes, ...added].sort((a, b) => a.name.localeCompare(b.name));
-      inputValue = '';
-      showToast(
-        added.length === 1 ? `Added ${added[0].name}` : `Added ${added.length} athletes`,
-        async () => {
-          for (const a of added) await storage.deleteAthlete(a.id);
-          athletes = athletes.filter(x => !added.some(a => a.id === x.id));
-        }
-      );
+      athletes = sortAthletes([...athletes, added]);
+      firstInput = '';
+      lastInput = '';
+      showToast(`Added ${displayName(added)}`, async () => {
+        await storage.deleteAthlete(added.id);
+        athletes = athletes.filter(x => x.id !== added.id);
+      });
     } finally {
       working = false;
     }
@@ -124,14 +154,9 @@
         return;
       }
       athletes = athletes.filter(x => x.id !== a.id);
-      showToast(`Removed ${a.name}`, async () => {
-        // Undo: re-insert. Note: the new row will have a NEW UUID, which means any
-        // results that referenced the old ID will become orphaned. Not a problem yet
-        // because results still live in localStorage and this is a rare action.
-        const restored = await storage.addAthlete(a.name);
-        if (restored) {
-          athletes = [...athletes, restored].sort((x, y) => x.name.localeCompare(y.name));
-        }
+      showToast(`Removed ${displayName(a)}`, async () => {
+        const restored = await storage.addAthlete(a.first_name, a.last_name);
+        if (restored) athletes = sortAthletes([...athletes, restored]);
       });
     } finally {
       working = false;
@@ -141,25 +166,28 @@
   function startEdit(a) {
     menuOpenFor = null;
     editingId = a.id;
-    editingName = a.name;
+    editingFirst = a.first_name || '';
+    editingLast = a.last_name || '';
   }
 
   async function saveEdit() {
-    const trimmed = editingName.trim();
-    if (!trimmed) { cancelEdit(); return; }
+    const first = editingFirst.trim();
+    const last = editingLast.trim();
+    if (!first) { cancelEdit(); return; }
     if (working) return;
     working = true;
     try {
-      const ok = await storage.updateAthlete(editingId, { name: trimmed });
+      const ok = await storage.updateAthlete(editingId, { first_name: first, last_name: last });
       if (!ok) {
         alert('Could not save — see browser console for details.');
         return;
       }
-      athletes = athletes
-        .map(a => a.id === editingId ? { ...a, name: trimmed } : a)
-        .sort((a, b) => a.name.localeCompare(b.name));
+      athletes = sortAthletes(athletes.map(a =>
+        a.id === editingId ? { ...a, first_name: first, last_name: last } : a
+      ));
       editingId = null;
-      editingName = '';
+      editingFirst = '';
+      editingLast = '';
     } finally {
       working = false;
     }
@@ -167,7 +195,8 @@
 
   function cancelEdit() {
     editingId = null;
-    editingName = '';
+    editingFirst = '';
+    editingLast = '';
   }
 
   function showToast(message, undoFn) {
@@ -183,7 +212,7 @@
   function onKey(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      addAthletes();
+      addOne();
     }
   }
   function onEditKey(e) {
@@ -202,14 +231,22 @@
 <div class="add-row">
   <input
     type="text"
-    placeholder="Name, or comma-separated for multiple"
-    bind:value={inputValue}
+    placeholder="First name"
+    bind:value={firstInput}
     onkeydown={onKey}
+    autocomplete="off"
   />
-  <button class="primary" onclick={addAthletes}>Add</button>
+  <input
+    type="text"
+    placeholder="Last name"
+    bind:value={lastInput}
+    onkeydown={onKey}
+    autocomplete="off"
+  />
+  <button class="primary" onclick={addOne} disabled={working || !firstInput.trim()}>Add</button>
 </div>
 <div class="add-actions">
-  <span class="dim small">Separate multiple names with commas or new lines.</span>
+  <span class="dim small">For bulk imports, use the CSV upload — auto-detects one or two columns.</span>
   <input
     type="file"
     accept=".csv,text/csv,text/plain"
@@ -230,18 +267,12 @@
     {#each athletes as a (a.id)}
       <div class="athlete-row">
         {#if editingId === a.id}
-          <input
-            class="edit-input"
-            type="text"
-            bind:value={editingName}
-            onkeydown={onEditKey}
-            onblur={saveEdit}
-            autofocus
-          />
+          <input class="edit-input" type="text" placeholder="First name" bind:value={editingFirst} onkeydown={onEditKey} autofocus />
+          <input class="edit-input" type="text" placeholder="Last name" bind:value={editingLast} onkeydown={onEditKey} />
           <button class="primary" onclick={saveEdit}>Save</button>
         {:else}
           <a class="row-link" href={`/athletes/${a.id}`}>
-            <div>{a.name}</div>
+            <div>{displayName(a)}</div>
             <div class="row-chev" aria-hidden="true">›</div>
           </a>
           <div class="menu-wrap">
@@ -258,7 +289,7 @@
             {#if menuOpenFor === a.id}
               <div class="menu-pop">
                 <button type="button" onclick={() => startEdit(a)}>Edit name</button>
-                <button type="button" class="menu-danger" onclick={() => deleteAthlete(a)}>Delete</button>
+                <button type="button" class="danger" onclick={() => deleteAthlete(a)}>Delete</button>
               </div>
             {/if}
           </div>
@@ -279,8 +310,8 @@
         <div class="preview-section">
           <div class="preview-label">Will be added</div>
           <div class="preview-list">
-            {#each csvPreview.fresh as name}
-              <div class="preview-row">{name}</div>
+            {#each csvPreview.fresh as p}
+              <div class="preview-row">{displayName(p)}</div>
             {/each}
           </div>
         </div>
@@ -297,7 +328,7 @@
       {/if}
       <div class="row" style="margin-top: 16px; justify-content: flex-end;">
         <button onclick={cancelCSVImport}>Cancel</button>
-        <button class="primary" onclick={commitCSVImport} disabled={csvPreview.fresh.length === 0}>
+        <button class="primary" onclick={commitCSVImport} disabled={csvPreview.fresh.length === 0 || working}>
           Import {csvPreview.fresh.length}
         </button>
       </div>
@@ -308,19 +339,18 @@
 {#if toast}
   <div class="toast" role="status">
     <span>{toast.message}</span>
-    {#if toast.undoFn}
-      <button onclick={handleUndo}>Undo</button>
-    {/if}
+    {#if toast.undoFn}<button onclick={handleUndo}>Undo</button>{/if}
   </div>
 {/if}
 
 <style>
   .add-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
     gap: 8px;
     margin-bottom: 6px;
   }
-  .add-row input { flex: 1; }
+  .add-row input { width: 100%; }
   .add-actions {
     display: flex;
     align-items: center;
@@ -336,8 +366,66 @@
   }
   .small { font-size: 12px; }
   .list { display: flex; flex-direction: column; gap: 6px; }
+  .athlete-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 6px 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-height: 56px;
+    gap: 8px;
+  }
+  .row-link {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    text-decoration: none;
+    color: var(--text);
+    padding: 8px 0;
+  }
+  .row-chev { color: var(--text-3); font-size: 22px; line-height: 1; padding-right: 4px; }
+  .edit-input {
+    flex: 1;
+    min-width: 0;
+  }
+  .menu-wrap { position: relative; }
+  .menu-trigger {
+    background: transparent;
+    border: none;
+    padding: 8px;
+    color: var(--text-2);
+    min-height: 40px;
+  }
+  .menu-trigger:hover { color: var(--text); background: var(--surface-2); }
+  .menu-pop {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    z-index: 100;
+    min-width: 140px;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+  }
+  .menu-pop button {
+    text-align: left;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    border-radius: 4px;
+  }
+  .menu-pop button:hover { background: var(--surface-2); }
+  .menu-pop button.danger { color: var(--warning); }
 
-  /* CSV preview overlay (shares pattern with team picker on bleep page) */
+  /* CSV preview overlay */
   .picker-overlay {
     position: fixed; inset: 0;
     background: rgba(0, 0, 0, 0.4);
@@ -373,67 +461,14 @@
     font-size: 13px;
   }
   .preview-row { padding: 3px 0; }
-  .athlete-row {
+  .row {
     display: flex;
-    align-items: center;
-    padding: 6px 6px 6px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     gap: 8px;
-    min-height: 56px;
   }
-  .row-link {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    text-decoration: none;
-    color: var(--text);
-    padding: 8px 0;
-  }
-  .row-chev { color: var(--text-3); font-size: 20px; line-height: 1; padding-right: 4px; }
-  .menu-wrap { position: relative; }
-  .menu-trigger {
-    background: transparent;
-    border: 1px solid transparent;
-    padding: 8px;
-    min-height: 40px;
-    width: 40px;
-    color: var(--text-2);
-  }
-  .menu-trigger:hover { background: var(--surface-2); }
-  .menu-pop {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-lg);
-    min-width: 140px;
-    padding: 4px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-  }
-  .menu-pop button {
-    background: transparent;
-    border: none;
-    text-align: left;
-    padding: 8px 12px;
-    border-radius: 4px;
-    min-height: 36px;
-    font-size: 14px;
-  }
-  .menu-pop button:hover { background: var(--surface-2); }
-  .menu-pop .menu-danger { color: var(--danger); }
-  .menu-pop .menu-danger:hover { background: var(--danger-soft); }
-  .edit-input { flex: 1; }
+
+  /* Toast */
   .toast {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
+    position: fixed; bottom: 20px; left: 50%;
     transform: translateX(-50%);
     background: var(--surface);
     border: 1px solid var(--border-strong);
@@ -445,5 +480,10 @@
     gap: 12px;
     font-size: 14px;
     z-index: 100;
+  }
+
+  @media (max-width: 480px) {
+    .add-row { grid-template-columns: 1fr 1fr; }
+    .add-row button { grid-column: span 2; }
   }
 </style>

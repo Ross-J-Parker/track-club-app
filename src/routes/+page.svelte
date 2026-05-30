@@ -3,6 +3,7 @@
   import { storage } from '$lib/storage.js';
   import { EVENTS, TRACK_EVENTS, FIELD_EVENTS, groupsForEvent, lapLabel, fmtTime, todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
+  import { displayName } from '$lib/storage.js';
   import AthletePicker from '$lib/components/AthletePicker.svelte';
   import Stepper from '$lib/components/Stepper.svelte';
 
@@ -79,7 +80,7 @@
         group, date,
         runners: [...selectedIds].map(id => {
           const a = athletes.find(x => x.id === id);
-          return { id, name: a.name, attempts: [null, null, null] };
+          return { id, name: displayName(a), attempts: [null, null, null] };
         })
       };
       phase = 'field';
@@ -94,7 +95,7 @@
       startedAt: Date.now(),
       runners: [...selectedIds].map(id => {
         const a = athletes.find(x => x.id === id);
-        return { id, name: a.name, splits: [], finished: false, finalTime: null, dnf: false };
+        return { id, name: displayName(a), splits: [], finished: false, finalTime: null, dnf: false };
       })
     };
     phase = 'live';

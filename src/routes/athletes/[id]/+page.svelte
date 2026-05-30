@@ -1,6 +1,7 @@
 <script>
   import { fmtTime, pbsForAthlete, fmtValue, EVENTS } from '$lib/events.js';
   import { replayBadgesForAthlete } from '$lib/badges.js';
+  import { displayName } from '$lib/storage.js';
 
   let { data } = $props();
 
@@ -50,7 +51,7 @@
 
 <a href="/athletes" class="back-link">‹ Back to athletes</a>
 
-<h1 class="profile-name">{athlete.name}</h1>
+<h1 class="profile-name">{displayName(athlete)}</h1>
 <div class="muted small" style="margin-bottom: 24px;">
   {athleteResults.length} {athleteResults.length === 1 ? 'result' : 'results'} ·
   {badges.length} {badges.length === 1 ? 'badge' : 'badges'} earned

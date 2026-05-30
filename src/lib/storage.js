@@ -2,16 +2,14 @@
 //   - Athletes live in Supabase (cloud, shared across coaches)
 //   - Results, badges, badge awards still on localStorage (will migrate next phase)
 //
-// Athletes API is now async (returns Promises) because database calls take time
-// and can fail. Callers must await.
+// Athletes API is async (returns Promises). Callers must await.
+// Athlete shape: { id, first_name, last_name }.
 
 import { supabase } from './supabase.js';
 import { get } from 'svelte/store';
 import { coach } from './auth.js';
 
 const PREFIX = 'trackclub:';
-
-// ---- localStorage helpers (used for results/badges only now) ----
 
 function read(key, fallback) {
   if (typeof localStorage === 'undefined') return fallback;
@@ -33,9 +31,6 @@ function write(key, value) {
 }
 
 // ---- Athletes (Supabase) ----
-//
-// Each athlete row is { id (uuid), club_id (uuid), name (text), created_at }.
-// We expose them in the same shape the rest of the app expects: { id, name }.
 
 function currentClubId() {
   const c = get(coach);
@@ -46,8 +41,8 @@ function currentClubId() {
 async function getAthletes() {
   const { data, error } = await supabase
     .from('athletes')
-    .select('id, name')
-    .order('name', { ascending: true });
+    .select('id, first_name, last_name')
+    .order('first_name', { ascending: true });
   if (error) {
     console.error('getAthletes failed', error);
     return [];
@@ -55,14 +50,21 @@ async function getAthletes() {
   return data || [];
 }
 
-// Add a single athlete. Returns the new row (with its database-assigned UUID),
-// or null on failure.
-async function addAthlete(name) {
+async function addAthlete(first_name, last_name) {
   const club_id = currentClubId();
+  const row = {
+    first_name: (first_name || '').trim(),
+    last_name: (last_name || '').trim(),
+    club_id
+  };
+  if (!row.first_name) {
+    console.error('addAthlete: first_name required');
+    return null;
+  }
   const { data, error } = await supabase
     .from('athletes')
-    .insert({ name: name.trim(), club_id })
-    .select('id, name')
+    .insert(row)
+    .select('id, first_name, last_name')
     .single();
   if (error) {
     console.error('addAthlete failed', error);
@@ -71,18 +73,21 @@ async function addAthlete(name) {
   return data;
 }
 
-// Bulk-insert multiple athletes (for CSV import). Returns the new rows.
-async function addAthletes(names) {
+// Bulk insert. Accepts an array of { first_name, last_name } objects.
+async function addAthletes(items) {
   const club_id = currentClubId();
-  const rows = names
-    .map(n => (typeof n === 'string' ? n.trim() : ''))
-    .filter(Boolean)
-    .map(name => ({ name, club_id }));
+  const rows = items
+    .map(it => ({
+      first_name: (it.first_name || '').trim(),
+      last_name: (it.last_name || '').trim(),
+      club_id
+    }))
+    .filter(r => r.first_name); // require at least a first name
   if (rows.length === 0) return [];
   const { data, error } = await supabase
     .from('athletes')
     .insert(rows)
-    .select('id, name');
+    .select('id, first_name, last_name');
   if (error) {
     console.error('addAthletes failed', error);
     return [];
@@ -91,9 +96,12 @@ async function addAthletes(names) {
 }
 
 async function updateAthlete(id, patch) {
+  const cleanPatch = {};
+  if (patch.first_name !== undefined) cleanPatch.first_name = patch.first_name.trim();
+  if (patch.last_name !== undefined) cleanPatch.last_name = (patch.last_name || '').trim();
   const { error } = await supabase
     .from('athletes')
-    .update(patch)
+    .update(cleanPatch)
     .eq('id', id);
   if (error) console.error('updateAthlete failed', error);
   return !error;
@@ -108,17 +116,49 @@ async function deleteAthlete(id) {
   return !error;
 }
 
+// ---- Display helpers ----
+//
+// `displayName` is the normal way to render an athlete — "Amelia Chen".
+// `sortName` is "Chen, Amelia" — used only when sorting alphabetically by last name,
+// so the visual reflects the sort order.
+
+export function displayName(a) {
+  if (!a) return '';
+  const first = (a.first_name || '').trim();
+  const last = (a.last_name || '').trim();
+  return last ? `${first} ${last}` : first;
+}
+
+export function sortName(a) {
+  if (!a) return '';
+  const first = (a.first_name || '').trim();
+  const last = (a.last_name || '').trim();
+  return last ? `${last}, ${first}` : first;
+}
+
+// Parse a full-name string into { first_name, last_name } using the
+// last-whitespace heuristic. "Amelia van der Berg" → { first: "Amelia van der", last: "Berg" }.
+// Single-word names get an empty last name; the user can fix that in edit afterwards.
+export function splitFullName(full) {
+  const trimmed = (full || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return { first_name: '', last_name: '' };
+  const idx = trimmed.lastIndexOf(' ');
+  if (idx === -1) return { first_name: trimmed, last_name: '' };
+  return {
+    first_name: trimmed.slice(0, idx),
+    last_name: trimmed.slice(idx + 1)
+  };
+}
+
 // ---- Public API ----
 
 export const storage = {
-  // Athletes (async, Supabase-backed)
   getAthletes,
   addAthlete,
   addAthletes,
   updateAthlete,
   deleteAthlete,
 
-  // Results, badges (still on localStorage for now)
   getResults() { return read('results', []); },
   setResults(list) { write('results', list); },
   getCustomBadges() { return read('customBadges', []); },

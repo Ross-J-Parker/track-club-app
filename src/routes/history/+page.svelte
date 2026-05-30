@@ -1,5 +1,6 @@
 <script>
   import { fmtValue } from '$lib/events.js';
+  import { displayName } from '$lib/storage.js';
 
   let { data } = $props();
 
@@ -35,7 +36,7 @@
 <div class="filters">
   <select bind:value={athleteId}>
     <option value="">All athletes</option>
-    {#each athletes as a}<option value={a.id}>{a.name}</option>{/each}
+    {#each athletes as a}<option value={a.id}>{displayName(a)}</option>{/each}
   </select>
   <select bind:value={eventName}>
     <option value="">All events</option>

@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { storage } from '$lib/storage.js';
+  import { storage, displayName } from '$lib/storage.js';
   import { todayISO, uid } from '$lib/events.js';
   import { checkBadges } from '$lib/badges.js';
   import { buildLevels, BLEEP_VARIANTS } from '$lib/bleep.js';
@@ -163,7 +163,7 @@
         date,
         runners: [...selectedIds].map(id => {
           const a = athletes.find(x => x.id === id);
-          return { id, name: a.name, droppedAt: null, dnf: false };
+          return { id, name: displayName(a), droppedAt: null, dnf: false };
         })
       };
     } else {
@@ -299,7 +299,7 @@
           if (!a) return;
           newResults.push({
             id: uid('r'),
-            athleteId: aid, athleteName: a.name,
+            athleteId: aid, athleteName: displayName(a),
             event: ev, kind: 'fitness', group: race.group,
             date: race.date, dnf: false,
             level, shuttle, distanceM: distanceForLevel(level, shuttle),
@@ -470,7 +470,7 @@
     {:else}
       <div class="athlete-grid">
         {#each unassigned as a (a.id)}
-          <button type="button" class="athlete-chip" onclick={() => openTeamPicker(a.id)}>{a.name}</button>
+          <button type="button" class="athlete-chip" onclick={() => openTeamPicker(a.id)}>{displayName(a)}</button>
         {/each}
       </div>
     {/if}
@@ -487,7 +487,7 @@
             {@const a = athletes.find(x => x.id === aid)}
             {#if a}
               <button type="button" class="member-chip" onclick={() => removeFromTeam(i, aid)}>
-                {a.name} <span class="x">×</span>
+                {displayName(a)} <span class="x">×</span>
               </button>
             {/if}
           {/each}
@@ -502,7 +502,7 @@
     {@const pickerAthlete = athletes.find(a => a.id === teamPickerFor)}
     <div class="picker-overlay" onclick={closeTeamPicker}>
       <div class="picker-card" onclick={(e) => e.stopPropagation()}>
-        <div class="picker-title">Assign {pickerAthlete?.name} to:</div>
+        <div class="picker-title">Assign {displayName(pickerAthlete)} to:</div>
         <div class="picker-options">
           {#each teams as t, i (t.id)}
             <button class="picker-team-btn" onclick={() => assignToTeam(i, teamPickerFor)}>
@@ -568,7 +568,7 @@
   {:else}
     <div class="runner-grid">
       {#each race.teams as t (t.id)}
-        {@const firstNames = t.memberIds.map(id => (athletes.find(a => a.id === id)?.name || '').split(' ')[0]).filter(Boolean)}
+        {@const firstNames = t.memberIds.map(id => athletes.find(a => a.id === id)?.first_name || '').filter(Boolean)}
         <button type="button" class="runner-tile" class:finished={t.droppedAt} onclick={() => tapTeam(t)}>
           <div class="runner-name">{t.name}</div>
           <div class="muted small team-members-list">{firstNames.join(', ')}</div>
